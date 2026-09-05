@@ -1,7 +1,7 @@
 import { ProgressBar } from "@heroui/react";
 import { useState } from "react";
 import type { Shared } from "../App";
-import { CARD_CLS, Hint, Page, SettingsRow, SubTitle } from "../ui";
+import { Banner, CARD_CLS, Btn, FieldLabel, Hint, Page, SettingsRow, SubTitle } from "../ui";
 import { CopyButton } from "../motion";
 import { aidaIssue, TroubleshootModal, troubleshoot } from "../widgets";
 
@@ -137,13 +137,26 @@ export default function StatusPage({ shared }: { shared: Shared }) {
         </DetailCard>
       </div>
 
+      {/* NP Alert faded 同款横幅：OBS 源排障是最高频问题，常驻提醒 */}
+      <Banner end={
+        <Btn size="sm" variant="secondary" className="bg-[#27272a]"
+          onPress={() => window.open("/", "_blank")}>打开叠加层</Btn>
+      }>
+        在 OBS 添加「浏览器」源并填入下方地址；改了版式 OBS 没变化，就点浏览器源上的「刷新缓存」。
+      </Banner>
+
+      {/* NP IntegrationCard 同款：URL 输入框 + 复制 + 居中说明 */}
       <DetailCard title="OBS 设置">
-        <SettingsRow divider
-          title="浏览器源 URL" desc="OBS 添加「浏览器」源，填这个地址"
-          right={<>
-            <code className="rounded-md bg-[#27272a] px-2 py-1 font-jetbrains">{location.origin}/</code>
+        <div className="flex flex-col gap-2">
+          <FieldLabel>浏览器源 URL</FieldLabel>
+          <div className="flex min-h-11 items-center rounded-xl border border-white/10 bg-[#0e0f12] pl-4 pr-1">
+            <span className="min-w-0 flex-1 truncate font-jetbrains text-sm">{location.origin}/</span>
             <CopyButton text={`${location.origin}/`} label="复制 URL" />
-          </>} />
+          </div>
+          <div className="mt-4 flex items-center justify-center text-sm text-color-desc">
+            将上方内容填写到直播软件的浏览器源 URL 栏
+          </div>
+        </div>
         <Row k="宽 × 高" v={`${check?.canvas_w ?? "—"} × ${check?.canvas_h ?? "—"}`} />
         <Row k="内容预估高" v={`${check?.est_height ?? "—"} px`} />
       </DetailCard>

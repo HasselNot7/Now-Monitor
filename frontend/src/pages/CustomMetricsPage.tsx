@@ -65,7 +65,7 @@ export default function CustomMetricsPage({ shared }: { shared: Shared }) {
           </Btn>
         }>
         {customs.length > 0 && (
-          <div className="mt-3 flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs text-color-desc">已注册 {customs.length} 个：</span>
             {customs.map((m: Metric) => (
               <div key={m.id}
@@ -82,7 +82,7 @@ export default function CustomMetricsPage({ shared }: { shared: Shared }) {
           </div>
         )}
 
-        <div className={`mt-3 ${CARD_CLS} px-4 py-2`}>
+        <div className={`${CARD_CLS} px-4 py-2`}>
           {!unknown ? (
             <Hint>载入中…</Hint>
           ) : !unknown.ok ? (

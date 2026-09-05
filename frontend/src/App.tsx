@@ -156,7 +156,8 @@ export default function App() {
       {/* 侧栏：w-72 + 分隔线 + p-6，与 Now Playing 逐像素同款 */}
       <aside className="fixed inset-y-0 left-0 z-20 h-screen w-72 border-r border-border bg-background">
         <div className="flex h-full flex-col p-6">
-          <div className="mb-8 mt-4 flex items-center gap-2 px-3">
+          {/* 品牌区：NP 同款 —— 居中、top-4 下压、mb-14 大留白后接导航 */}
+          <div className="relative top-4 mb-14 flex items-center justify-center gap-2">
             <LogoMark size={24} />
             <span className="text-[19px] font-bold tracking-tight">Now Monitor</span>
           </div>
@@ -175,7 +176,7 @@ export default function App() {
           <nav className="flex flex-col gap-0.5">
             <div className="flex min-h-12 items-center justify-between px-3 py-1.5">
               <span className="text-base font-medium text-muted">自动刷新</span>
-              <TSwitch size="sm" isSelected={auto} onChange={setAuto} aria-label="自动刷新" />
+              <TSwitch isSelected={auto} onChange={setAuto} aria-label="自动刷新" />
             </div>
             <NavBtn label="刷新数据" Icon={RefreshCw} active={false} onClick={() => refreshAll()} />
             <NavBtn label="打开叠加层" Icon={ExternalLink} active={false}

@@ -1,4 +1,5 @@
 import { Button, Separator, Switch } from "@heroui/react";
+import { Info } from "lucide-react";
 
 /** v3 的 Button 不再转发原生 title（RAC filterDOMProps 白名单没有它）——编辑器里
  * 那三十来处中文悬停提示全靠它。包一层：有 title 就套个 inline-flex 的 span 承接，
@@ -11,8 +12,10 @@ export function Btn({ title, ...props }: React.ComponentProps<typeof Button> & {
 }
 
 /** v3 Switch 的根只是 SwitchField（状态容器），隐藏 input 由 Switch.Content 渲染 ——
- * 裸 Control/Thumb 组合不可交互。无可见标签的开关统一走这个封装。 */
-export function TSwitch({ title, ...props }:
+ * 裸 Control/Thumb 组合不可交互。无可见标签的开关统一走这个封装。
+ * 默认 lg 档 + index.css 里的几何覆盖 = Now Playing（HeroUI v2 默认档）的观感：
+ * 56×28 轨道、正圆 thumb。 */
+export function TSwitch({ size = "lg", title, ...props }:
   React.ComponentProps<typeof Switch> & { title?: string }) {
   const sw = (
     <Switch {...props}>
@@ -40,7 +43,9 @@ export const Page = ({ title, children }: {
   </>
 );
 
-/** 区块标题（音乐服务 / 系统设置 那一级），right 放在标题行末尾（如状态 Chip）。 */
+/** 区块标题（音乐服务 / 系统设置 那一级），right 放在标题行末尾（如状态 Chip）。
+ * 结构照抄 NP 设置页：<flex flex-col gap-4> 区题 + 内容 </> + Divider —— 区题与
+ * 内容之间恒定 16px，调用方不要再自己塞 mt。 */
 export const Section = ({ title, right, children, divider = true }: {
   title: string;
   right?: React.ReactNode;
@@ -48,7 +53,7 @@ export const Section = ({ title, right, children, divider = true }: {
   divider?: boolean;
 }) => (
   <>
-    <div className="flex flex-col">
+    <div className="flex flex-col gap-4">
       <div className="flex flex-row items-end justify-between gap-2">
         <h2 className="text-xl font-bold leading-9 text-foreground">{title}</h2>
         {right}
@@ -100,5 +105,33 @@ export const SettingsRow = ({ title, desc, right, divider = true }: {
   </div>
 );
 
-/** Now Playing 卡片底：近黑底 + 极淡描边 + rounded-xl，悬停微亮。 */
-export const CARD_CLS = "rounded-xl border border-white/[0.04] bg-[#1a1a1d]";
+/** NP 卡片底：HeroUI dark 的 content1（#18181b）—— 比背景亮一档、无描边、大圆角，
+ * 与 NP 组件集成卡 / 使用帮助手风琴同一块底。 */
+export const CARD_CLS = "rounded-2xl bg-[#18181b]";
+
+/** NP 的 Alert faded 信息横幅（播放器/虚拟摄像头页顶那种）：深灰圆角条 +
+ * 左侧圆底 info 图标 + 描述 + 右侧动作（多为「查看教程」flat 按钮）。 */
+export const Banner = ({ children, end }: {
+  children: React.ReactNode;
+  end?: React.ReactNode;
+}) => (
+  <div className="flex min-h-14 w-full items-center gap-3 rounded-xl bg-[#1e1e22] px-4 py-3">
+    <span className="grid size-7 shrink-0 place-items-center rounded-full bg-white/10">
+      <Info size={15} strokeWidth={1.75} className="text-foreground" />
+    </span>
+    <span className="min-w-0 flex-1 text-sm leading-6 text-foreground">{children}</span>
+    {end}
+  </div>
+);
+
+/** NP 的紧凑操作行（h-10）：左标题右按钮，如「桌面播放器 | 打开」。
+ * 与 SettingsRow 的区别：没有描述行、高度矮一截，一行一个动作。 */
+export const ActionRow = ({ title, right }: {
+  title: React.ReactNode;
+  right: React.ReactNode;
+}) => (
+  <div className="flex h-10 w-full items-center justify-between gap-2">
+    <span className="text-base text-foreground">{title}</span>
+    {right}
+  </div>
+);

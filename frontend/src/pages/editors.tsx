@@ -40,11 +40,6 @@ const GROUP_TITLES: Record<string, string> = {
 
 export const outPaths = (metrics: Metric[]): string[] => metrics.filter(m => m.out).map(m => m.out!);
 
-export const metricOpt = (metrics: Metric[], p: string): string => {
-  const name = metrics.find(m => m.out === p)?.name || p;
-  return `${name} · ${p}`;
-};
-
 const NONE = "__none__";
 
 export function MetricSelect({ metrics, value, allowEmpty = true, compact, onChange }: {
@@ -56,10 +51,15 @@ export function MetricSelect({ metrics, value, allowEmpty = true, compact, onCha
   onChange: (v: string) => void;
 }) {
   const selected = value ?? (allowEmpty ? NONE : null);
+  // 选项两段式：名字主文本，路径弱化成小号灰字（原来 `名字 · 路径` 同字号同色，挤成一团）
+  const opt = (p: string): { primary: string; secondary?: string } => {
+    const name = metrics.find(m => m.out === p)?.name || p;
+    return { primary: name, secondary: name === p ? undefined : p };
+  };
   const options = [
-    ...(value ? [{ id: value, label: metricOpt(metrics, value) }] : []),
-    ...(allowEmpty ? [{ id: NONE, label: "（不用）" }] : []),
-    ...metrics.filter(m => m.out && m.out !== value).map(m => ({ id: m.out!, label: metricOpt(metrics, m.out!) })),
+    ...(value ? [{ id: value, ...opt(value) }] : []),
+    ...(allowEmpty ? [{ id: NONE, primary: "None" }] : []),
+    ...metrics.filter(m => m.out && m.out !== value).map(m => ({ id: m.out!, ...opt(m.out!) })),
   ];
   return (
     <Select
@@ -70,14 +70,21 @@ export function MetricSelect({ metrics, value, allowEmpty = true, compact, onCha
       onChange={k => onChange(!k || k === NONE ? "" : String(k))}
     >
       <Select.Trigger className="min-h-12 w-full min-w-0 px-4">
-        <Select.Value className="min-w-0 truncate" />
+        <Select.Value className="min-w-0" />
         <Select.Indicator />
       </Select.Trigger>
       <Select.Popover>
         <ListBox>
           {options.map(o => (
-            <ListBox.Item key={o.id} id={o.id} textValue={o.label} className="min-h-11 px-4 text-base">
-              {o.label}
+            <ListBox.Item key={o.id} id={o.id}
+              textValue={[o.primary, o.secondary].filter(Boolean).join(" ")}
+              className="min-h-14 px-3 py-2.5 text-base">
+              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span className="truncate">{o.primary}</span>
+                {o.secondary && (
+                  <span className="truncate text-xs font-jetbrains text-muted">{o.secondary}</span>
+                )}
+              </span>
               <ListBox.ItemIndicator />
             </ListBox.Item>
           ))}
