@@ -17,6 +17,20 @@ export default function DefaultLayout({
   onPublished?: () => void;
 }) {
   const { pathname } = useLocation();
+  // U1：/editor 侧栏默认收成图标窄栏（64px），展开为 288px 推挤式 dock——
+  // 让位宽度经 --nav-w 单向流给 fixed 定位的编辑器工作台（见 EditorPage），
+  // 其余路由恒 288px 逐像素不变。
+  const onEditor = pathname === "/editor";
+  const [navMode, setNavMode] = useState<"narrow" | "wide">(
+    () => (localStorage.getItem("hwobs.navMode.editor") === "wide" ? "wide" : "narrow"));
+  const toggleNavMode = useCallback(() => {
+    setNavMode(m => {
+      const n = m === "narrow" ? "wide" : "narrow";
+      localStorage.setItem("hwobs.navMode.editor", n);
+      return n;
+    });
+  }, []);
+  const railNarrow = onEditor && navMode === "narrow";
   const scrollRef = useRef<OverlayScrollbarsComponentRef<"div">>(null);
 
   // 表单类页走 NP 的 800px 居中列；表格这类数据密集页放宽到 1200px。
@@ -70,7 +84,8 @@ export default function DefaultLayout({
 
   return (
     <>
-      <div className="bg-background font-sans text-foreground antialiased min-h-screen">
+      <div className="bg-background font-sans text-foreground antialiased min-h-screen"
+        style={{ "--nav-w": railNarrow ? "4rem" : "18rem" } as React.CSSProperties}>
         <div data-overlay-container="true">
           <div
             id="app-container"
@@ -78,13 +93,17 @@ export default function DefaultLayout({
           >
             {/* 防止父级滚动 */}
             <div className="flex h-screen overflow-hidden">
-              {/* 侧边栏 */}
-              <div className="md:fixed md:top-0 md:left-0 md:h-screen md:w-72 md:border-r md:border-divider md:bg-background md:z-20">
-                <Sidebar auto={auto} onAutoChange={onAutoChange} onQuit={onQuit} onPublished={onPublished} />
+              {/* 侧边栏：/editor 窄栏态 w-16，其余（含 /editor 展开态=推挤 dock）w-72。
+                  宽度过渡 + overflow-hidden 做裁切显隐；档位浮层是 fixed 定位不受裁切 */}
+              <div className={`overflow-hidden transition-[width] duration-300 ease-in-out motion-reduce:transition-none md:fixed md:top-0 md:left-0 md:h-screen md:border-r md:border-divider md:bg-background md:z-20 ${
+                railNarrow ? "md:w-16" : "md:w-72"
+              }`}>
+                <Sidebar auto={auto} onAutoChange={onAutoChange} onQuit={onQuit} onPublished={onPublished}
+                  nav={onEditor ? { mode: navMode, onToggle: toggleNavMode } : undefined} />
               </div>
 
-              {/* 主体内容容器 */}
-              <div className="relative flex-1 md:ml-72 h-screen">
+              {/* 主体内容容器：跟随侧栏让位（窄栏 64px / 展开或其余路由 288px），同步过渡 */}
+              <div className={`transition-[margin] duration-300 ease-in-out motion-reduce:transition-none relative flex-1 h-screen ${railNarrow ? "md:ml-16" : "md:ml-72"}`}>
                 {/* 滚动内容 */}
                 <OverlayScrollbarsComponent
                   ref={scrollRef}

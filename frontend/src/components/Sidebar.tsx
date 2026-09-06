@@ -1,9 +1,12 @@
 // NP 的 Sidebar 原样搬：品牌区 + 顶部导航 + flex-grow + 底部导航，移动端抽屉。
 // 改动：品牌换成 Now Monitor 的 LogoMark；导航来自我们的 siteConfig；
 // 「自动刷新」开关行插在底部导航之前；退出程序渲染成 danger 按钮。
+// U1：/editor 传 nav 时可切图标窄栏（图标 + tooltip，功能与全宽一一对应；
+// 档位切换收进右侧浮层卡片，复用全宽的 ProfileSwitcher 原组件）。
 import { useState, useCallback, memo } from "react";
 import { useLocation, Link } from "react-router-dom";
 import { Switch } from "@heroui/switch";
+import { Layers, PanelLeftClose, PanelLeftOpen, RefreshCw } from "lucide-react";
 
 import HamburgerButton from "./HamburgerButton";
 import { ProfileSwitcher } from "../widgets";
@@ -138,12 +141,104 @@ const NavContent: React.FC<{
   );
 };
 
+/** U1：/editor 图标窄栏。图标 + title tooltip；选中态/外链/退出语义与全宽一致；
+ * 档位切换收进右侧浮层卡片（内嵌全宽的 ProfileSwitcher 原组件，含「存为」）。 */
+const RailSidebar: React.FC<{
+  topNavItems: NavItem[];
+  bottomNavItems: NavItem[];
+  currentPath: string;
+  auto: boolean;
+  onAutoChange: (v: boolean) => void;
+  onQuit: () => void;
+  onPublished?: () => void;
+  onToggle: () => void;
+}> = ({ topNavItems, bottomNavItems, currentPath, auto, onAutoChange, onQuit, onPublished, onToggle }) => {
+  const { openExternalUrl } = useOpenExternalUrl();
+  const [profOpen, setProfOpen] = useState(false);
+  const iconBtn = "flex h-10 w-10 cursor-pointer items-center justify-center rounded-xl transition-all duration-150";
+
+  const renderItem = (item: NavItem) => {
+    const isActive = !item.external && !item.action && currentPath === item.href;
+
+    if (item.action === "quit") {
+      return (
+        <button key={item.key} type="button" title={item.label}
+          className={`${iconBtn} text-default-500 hover:bg-danger/15 hover:text-danger`}
+          onClick={onQuit}>
+          {item.icon}
+        </button>
+      );
+    }
+
+    return (
+      <Link key={item.key} to={item.href} title={item.label}
+        className={`${iconBtn} ${
+          isActive
+            ? "bg-default-100 text-foreground"
+            : "text-default-500 hover:bg-default/40 hover:text-default-foreground"
+        }`}
+        onClick={e => {
+          if (item.external) {
+            e.preventDefault();
+            openExternalUrl(item.href.startsWith("/") ? `${location.origin}${item.href}` : item.href);
+          }
+        }}>
+        {item.icon}
+      </Link>
+    );
+  };
+
+  return (
+    <div className="relative flex h-full w-16 flex-col items-center gap-1 py-4">
+      <Link to="/" title="Now Monitor" className="flex h-10 w-10 items-center justify-center">
+        <LogoMark size={24} />
+      </Link>
+      <button type="button" title="展开侧栏" onClick={onToggle}
+        className={`${iconBtn} text-default-500 hover:bg-white/[0.06] hover:text-foreground`}>
+        <PanelLeftOpen size={22} strokeWidth={1.75} />
+      </button>
+
+      {/* 版式档位：点开右侧浮层卡片；透明遮罩点击关闭（手法同移动端遮罩） */}
+      <button type="button" title="版式档位" onClick={() => setProfOpen(o => !o)}
+        className={`${iconBtn} ${profOpen
+          ? "bg-default-100 text-foreground"
+          : "text-default-500 hover:bg-white/[0.06] hover:text-foreground"}`}>
+        <Layers size={22} strokeWidth={1.75} />
+      </button>
+      {profOpen && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setProfOpen(false)} />
+          {/* fixed 定位：侧栏壳 overflow-hidden 裁不到它；72px = 64 窄栏 + 8 间距 */}
+          <div className="fixed left-[72px] top-24 z-40 w-64 rounded-2xl bg-[#26262a] p-1 shadow-2xl">
+            <ProfileSwitcher onPublished={onPublished} />
+          </div>
+        </>
+      )}
+
+      <nav className="flex flex-col gap-1">{topNavItems.map(renderItem)}</nav>
+
+      <div className="flex-grow" />
+
+      {/* 自动刷新：图标开关，关时警告色提醒 */}
+      <button type="button" title={`自动刷新（${auto ? "开" : "关"}）`} onClick={() => onAutoChange(!auto)}
+        className={`${iconBtn} ${auto
+          ? "text-default-500 hover:bg-white/[0.06] hover:text-foreground"
+          : "text-warning hover:bg-white/[0.06]"}`}>
+        <RefreshCw size={20} strokeWidth={1.75} />
+      </button>
+      <nav className="flex flex-col gap-1">{bottomNavItems.map(renderItem)}</nav>
+    </div>
+  );
+};
+
 export const Sidebar: React.FC<{
   auto: boolean;
   onAutoChange: (v: boolean) => void;
   onQuit: () => void;
   onPublished?: () => void;
-}> = ({ auto, onAutoChange, onQuit, onPublished }) => {
+  /** /editor 专属：图标窄栏模式（其余路由不传 = 永远全宽） */
+  nav?: { mode: "narrow" | "wide"; onToggle: () => void };
+}> = ({ auto, onAutoChange, onQuit, onPublished, nav }) => {
   const location = useLocation();
   const currentPath = location.pathname;
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -162,7 +257,7 @@ export const Sidebar: React.FC<{
     setIsSidebarOpen((prev) => !prev);
   }, []);
 
-  const nav = (onItemClick: () => void) => (
+  const renderNav = (onItemClick: () => void) => (
     <NavContent
       auto={auto}
       bottomNavItems={bottomNavItems}
@@ -183,23 +278,43 @@ export const Sidebar: React.FC<{
         onToggleSidebar={toggleSidebar}
       />
 
-      {/* 桌面端侧边栏（移动设备隐藏） */}
+      {/* 桌面端侧边栏（移动设备隐藏）：/editor 窄栏态渲染图标栏，其余全宽 */}
       <div className="hidden md:block h-full">
-        <div className="h-full w-72 border-r border-divider p-6 flex flex-col">
-          {/* 软件图标 */}
-          <div className="flex flex-col relative top-4 items-center mb-8">
-            <Link to="/" className="flex items-center justify-center gap-2">
-              <LogoMark size={24} />
-              <span className="text-[19px] font-bold tracking-tight">Now Monitor</span>
-            </Link>
-          </div>
+        {nav?.mode === "narrow" ? (
+          <RailSidebar
+            auto={auto}
+            bottomNavItems={bottomNavItems}
+            currentPath={currentPath}
+            topNavItems={topNavItems}
+            onAutoChange={onAutoChange}
+            onPublished={onPublished}
+            onQuit={onQuit}
+            onToggle={nav.onToggle}
+          />
+        ) : (
+          <div className="h-full w-72 border-r border-divider p-6 flex flex-col">
+            {/* 软件图标 */}
+            <div className="flex flex-col relative top-4 items-center mb-8">
+              <Link to="/" className="flex items-center justify-center gap-2">
+                <LogoMark size={24} />
+                <span className="text-[19px] font-bold tracking-tight">Now Monitor</span>
+              </Link>
+              {/* /editor 覆盖层态：手动收起回窄栏（不做点画布自动收起） */}
+              {nav?.mode === "wide" && (
+                <button type="button" title="收起为图标栏" onClick={nav.onToggle}
+                  className="absolute right-0 top-0 grid size-8 cursor-pointer place-items-center rounded-lg text-default-500 transition-colors hover:bg-white/[0.06] hover:text-foreground">
+                  <PanelLeftClose size={16} />
+                </button>
+              )}
+            </div>
 
-          <ProfileSwitcher onPublished={onPublished} />
+            <ProfileSwitcher onPublished={onPublished} />
 
-          <div className="mt-2 flex-1 min-h-0 flex flex-col">
-            {nav(closeSidebar)}
+            <div className="mt-2 flex-1 min-h-0 flex flex-col">
+              {renderNav(closeSidebar)}
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* 移动设备侧边栏 */}
@@ -208,7 +323,7 @@ export const Sidebar: React.FC<{
           ${isSidebarOpen ? "translate-y-0" : "-translate-y-full"}`}
       >
         <div className="h-full flex flex-col p-6">
-          {nav(closeSidebar)}
+          {renderNav(closeSidebar)}
         </div>
       </div>
 

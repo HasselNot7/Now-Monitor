@@ -217,6 +217,11 @@ const PANEL_KEY = "hwobs.freePanel";
 /** 属性面板可拖宽度：默认 380，记忆用户上次拖到的位置 */
 const PROPS_W_KEY = "hwobs.editorPropsW";
 const PROPS_W_MIN = 300, PROPS_W_MAX = 760, PROPS_W_DEF = 380;
+/** 图层面板可拖宽度：默认 260（原 w-60=240；行内悬停按钮组 5×24≈132px + 图标与内边距
+ * ≈175px，260 给行名留 ~85px；MIN 180 仍保图标行可辨；MAX 480 ≈ 属性面板默认 380 的
+ * 1.26 倍，够深层嵌套缩进），记忆用户上次拖到的位置 */
+const LAYERS_W_KEY = "hwobs.editorLayersW";
+const LAYERS_W_MIN = 180, LAYERS_W_MAX = 480, LAYERS_W_DEF = 260;
 /** 草稿统一存这一个键（旧版两个页面各自的 flow/free 键首次读取时并入） */
 const DRAFT_KEY = "editor";
 
@@ -281,6 +286,17 @@ interface DragState {
 
 interface CtxMenu { x: number; y: number; kind: "widget" | "prompt"; i: number; }
 
+/** U3 图层树拖拽：行盒缓存与落位规格。一切操作只翻译成平铺数组的 splice +
+ * group 前缀改写（零新字段，overlay.json 格式不变）。 */
+interface TreeRow {
+  el: HTMLElement; top: number; bottom: number;
+  leaf?: number; group?: string; depth: number; prompt?: boolean;
+}
+type TreeDropSpec =
+  | { kind: "gap"; a: number; strip: boolean }   // a = 原数组锚点；strip = 叶子出一层
+  | { kind: "into"; path: string }               // 组行中段：入组 / 子树换父
+  | { kind: "blank"; a: number; strip: boolean }; // 列表空白：垫底（a = min 全体下标）
+
 /** Now Playing 式分段药丸容器：无边框，靠表面亮度分层，激活段 bg-default-100 */
 function SegGroup({ children }: { children: React.ReactNode }) {
   return <div className="flex h-10 items-center gap-0.5 rounded-xl bg-[#1a1a1d] p-1">{children}</div>;
@@ -324,6 +340,26 @@ export default function EditorPage({ shared }: { shared: Shared }) {
   const propsWRef = useRef(propsW);
   propsWRef.current = propsW;
   const propsDragRef = useRef<{ x: number; w: number } | null>(null);
+  /** 图层面板宽度：与属性面板同一套三件套（state / ref / 拖拽态），把手在右缘 */
+  const [layersW, setLayersW] = useState(() => {
+    const v = +localStorage.getItem(LAYERS_W_KEY)!;
+    return Number.isFinite(v) && v >= LAYERS_W_MIN && v <= LAYERS_W_MAX ? v : LAYERS_W_DEF;
+  });
+  const layersWRef = useRef(layersW);
+  layersWRef.current = layersW;
+  const layersDragRef = useRef<{ x: number; w: number } | null>(null);
+  /** 两个弹层的容器 ref：wheel 外点关闭时用于识别"滚轮在弹层内"（B1） */
+  const addMenuRef = useRef<HTMLDivElement>(null);
+  const ctxMenuRef = useRef<HTMLDivElement>(null);
+  /** U3 图层树拖拽：pending→active 两段式（4px 阈值）。指示器 DOM 直改：
+   * mousemove 幂等重设、drop/取消统一清，React 重渲染不留残影。 */
+  const treeDragRef = useRef<{ srcs: number[]; path?: string; startX: number; startY: number; active: boolean } | null>(null);
+  const treeHoverRef = useRef<TreeDropSpec | null>(null);
+  const treeRowsRef = useRef<TreeRow[]>([]);
+  const treeContRef = useRef<HTMLDivElement>(null);
+  const dndLineRef = useRef<HTMLDivElement>(null);
+  const intoElRef = useRef<HTMLElement | null>(null);
+  const [treeDragging, setTreeDragging] = useState<{ srcs: number[]; path?: string } | null>(null);
   const [layersOpen, setLayersOpen] = useState(() => localStorage.getItem("hwobs.editorLayers") !== "0");
   /** 图层树里收起的组路径（默认全展开） */
   const [closedGrp, setClosedGrp] = useState<Set<string>>(new Set());
@@ -385,6 +421,11 @@ export default function EditorPage({ shared }: { shared: Shared }) {
   /** 重做栈：与 histRef 对偶 —— undo 弹出的「当前态」进这里，新编辑发生即清空 */
   const redoRef = useRef<string[]>([]);
   const lastPushRef = useRef(0);
+  /** B2 面板编辑进撤销栈：shadowRef = 已被撤销栈覆盖的最近草稿序列化；
+   * lastPushKind 区分结构操作（struct）/面板编辑（panel）——面板编辑只与
+   * 面板编辑合并（500ms 内），结构操作后的第一次编辑永远独立成步。 */
+  const shadowRef = useRef("");
+  const lastPushKindRef = useRef<"struct" | "panel">("struct");
   /** 拖拽平移画布（中键或空格+左键）：记录起点与初始 scroll */
   const panRef = useRef<{ x: number; y: number; sl: number; st: number } | null>(null);
   const multiRef = useRef<number[]>([]);
@@ -430,6 +471,8 @@ export default function EditorPage({ shared }: { shared: Shared }) {
     setCtxMenu(null);
     histRef.current = [];
     redoRef.current = [];
+    shadowRef.current = JSON.stringify(d);   // B2：载入态即撤销基线（覆盖首次/带草稿恢复/还原上一版/放弃改动）
+    lastPushKindRef.current = "struct";
     enterGrp("");
     const isDirty = JSON.stringify(d) !== JSON.stringify(c);
     setDirty(isDirty);
@@ -446,27 +489,52 @@ export default function EditorPage({ shared }: { shared: Shared }) {
   useEffect(() => { api.widgetsMeta().then(setMeta).catch(() => {}); }, []);
   useEffect(() => { api.components().then(r => setComponents(r.components)).catch(() => {}); }, []);
 
-  /** 结构操作的历史快照（拖动/缩放/旋转/增删/复制/层级/微调），Ctrl+Z 逐层回退 */
-  const pushHistory = () => {
-    const d = draftRef.current;
-    if (!d) return;
-    const s = JSON.stringify(d);
+  /** 入栈原语（B2）：去重、限深、作废 redo，并刷新撤销基线（shadowRef）与
+   * 末次入栈性质。同态重复只对齐基线，不动栈/redo/时间窗（保持原时序语义）。 */
+  const pushSnapshot = (s: string, kind: "struct" | "panel") => {
     const h = histRef.current;
-    if (h[h.length - 1] === s) return;
+    if (h[h.length - 1] === s) {
+      shadowRef.current = s;
+      lastPushKindRef.current = kind;
+      return;
+    }
     h.push(s);
     if (h.length > 60) h.shift();
     redoRef.current = [];   // 有了新编辑，被撤销的分支作废（Figma/PS 同款约定）
+    shadowRef.current = s;
     lastPushRef.current = Date.now();
+    lastPushKindRef.current = kind;
+  };
+
+  /** 结构操作的历史快照（拖动/缩放/旋转/增删/复制/层级/微调/重命名/整组可见性），
+   * Ctrl+Z 逐层回退。全部结构操作经此一处，撤销基线随之同步。 */
+  const pushHistory = () => {
+    const d = draftRef.current;
+    if (!d) return;
+    pushSnapshot(JSON.stringify(d), "struct");
   };
 
   /** 编辑器子组件都是原地改草稿再调 onChange()：这里换一个新对象身份，
-   * 让预览 effect 感知到变化重推草稿。 */
+   * 让预览 effect 感知到变化重推草稿。
+   * B2：无 pushHistory 的编辑（面板字段/几何数字框/开关）在此集中进撤销栈——
+   * 影子（编辑前状态）入栈即成一步撤销；面板编辑之间 500ms 内合并为一步，
+   * 结构操作/undo/redo/载入后的第一次编辑永远独立成步。 */
   const onChange = useCallback(() => {
     const d = draftRef.current;
     const c = cfg;
     if (!d || !c) return;
+    const s = JSON.stringify(d);
+    if (s !== shadowRef.current) {
+      // 影子已在栈顶（结构操作/同态入栈刚发生）→ 编辑前状态无需重复入栈
+      const topIsShadow = histRef.current[histRef.current.length - 1] === shadowRef.current;
+      if (!topIsShadow &&
+          (lastPushKindRef.current !== "panel" || Date.now() - lastPushRef.current > 500)) {
+        pushSnapshot(shadowRef.current, "panel");
+      }
+      shadowRef.current = s;
+    }
     setDraft({ ...d });
-    const isDirty = JSON.stringify(d) !== JSON.stringify(c);
+    const isDirty = s !== JSON.stringify(c);
     // 有改动就暂存：切页面、刷新浏览器都还在；回到和已保存一致就清掉
     if (isDirty) saveDraft(DRAFT_KEY, d);
     else clearDraft(DRAFT_KEY);
@@ -501,6 +569,8 @@ export default function EditorPage({ shared }: { shared: Shared }) {
     setSelected(null);
     setSelPrompt(false);
     enterGrp("");
+    shadowRef.current = snap;              // B2：恢复态即新撤销基线
+    lastPushKindRef.current = "struct";    // 恢复后的面板编辑永远独立成步
     onChange();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onChange]);
@@ -519,8 +589,187 @@ export default function EditorPage({ shared }: { shared: Shared }) {
     setSelected(null);
     setSelPrompt(false);
     enterGrp("");
+    shadowRef.current = snap;              // B2：同 undo
+    lastPushKindRef.current = "struct";
     onChange();
   }, [onChange]);
+
+  /** --- U3 图层树拖拽 ---------------------------------------------------------
+   * pointer 自管（与画布同构）：行 mousedown 记 pending，位移 >4px 激活；
+   * 行内三段热区（上 25% 插前 / 下 25% 插后 / 组行中段 50% 入组）。
+   * 一切落位只对平铺数组做 splice + group 前缀改写；散布组按锚点折算天然成立。
+   * 每次 drop = 一次 pushHistory；拖拽视觉反馈不写草稿。 */
+
+  /** 行盒缓存：激活时采一次（拖拽中零草稿变更，行不动；rects 也已挂起）。 */
+  const cacheTreeRows = () => {
+    const cont = treeContRef.current;
+    if (!cont) return;
+    treeRowsRef.current = [...cont.querySelectorAll<HTMLElement>("[data-tree-row]")].map(el => {
+      const r = el.getBoundingClientRect();
+      return {
+        el, top: r.top, bottom: r.bottom,
+        leaf: el.dataset.leaf !== undefined ? Number(el.dataset.leaf) : undefined,
+        group: el.dataset.group || undefined,
+        depth: Number(el.dataset.depth || 0),
+        prompt: el.dataset.treeRow === "prompt",
+      };
+    });
+  };
+
+  const clearInto = () => {
+    if (intoElRef.current) { intoElRef.current.classList.remove("tree-dnd-into"); intoElRef.current = null; }
+  };
+
+  /** 拖拽结束/取消的统一清场（纪律①：不依赖 React 重渲染自愈） */
+  const clearTreeDnd = () => {
+    setTreeDragging(null);
+    treeHoverRef.current = null;
+    dndLineRef.current?.classList.remove("show");
+    clearInto();
+    document.body.style.cursor = "";
+  };
+
+  /** 行 mousedown：记 pending。修饰键加选、重命名输入框、中右键都不启动拖拽。 */
+  const treeDragPending = (e: React.MouseEvent, srcs: number[], path?: string) => {
+    if (e.button !== 0 || e.shiftKey || e.ctrlKey || e.metaKey) return;
+    const t = e.target as HTMLElement;
+    if (t.tagName === "INPUT" || t.tagName === "TEXTAREA") return;
+    treeDragRef.current = { srcs, path, startX: e.clientX, startY: e.clientY, active: false };
+  };
+
+  /** 组子树边界：rep = 最上层成员（最大下标），low = 最底层（最小下标）。 */
+  const grpBounds = (widgets: { group?: string }[], p: string) => {
+    const m = subtreeOf(widgets, p);
+    return { members: m, rep: Math.max(...m), low: Math.min(...m) };
+  };
+
+  /** 目标行 + 热区 → 落位规格。非法返回 null（零反馈：自己/后代防环/locked/prompt/叶子中段）。 */
+  const resolveDrop = (
+    row: TreeRow | null, zone: 0 | 1 | 2, d: NonNullable<typeof treeDragRef.current>,
+  ): TreeDropSpec | null => {
+    const dd = draftRef.current;
+    if (!dd) return null;
+    const isGroupSrc = d.path != null;
+    const srcLeaf = d.srcs[0];
+    const srcTag = isGroupSrc ? d.path! : (dd.widgets[srcLeaf] as GroupedWidget)?.group;
+    if (!row) {
+      // 列表空白：垫到最底层（min 全体下标）；带组标签的叶子顺带出一层
+      const a = dd.widgets.reduce((m, _, i) => Math.min(m, i), Infinity);
+      return { kind: "blank", a, strip: !isGroupSrc && !!srcTag };
+    }
+    if (row.prompt) return null;                                    // prompt 行不可放
+    if (row.leaf !== undefined && d.srcs.includes(row.leaf)) return null;   // 自己
+    if (row.group && isGroupSrc && (row.group === d.path ||
+      row.group.startsWith(d.path + "/") || d.path!.startsWith(row.group + "/"))) return null;  // 后代/祖先防环
+    if (row.leaf !== undefined && (dd.widgets[row.leaf] as NodeBase).locked) return null;     // locked 行
+    if (row.group) {
+      const { members, rep, low } = grpBounds(dd.widgets, row.group);
+      if (members.some(j => (dd.widgets[j] as NodeBase).locked)) return null;               // 含锁件的组
+      if (zone === 1) {
+        if (!isGroupSrc && srcTag === row.group) return null;      // 已在该组的中段
+        return { kind: "into", path: row.group };                   // 入组 / 子树换父
+      }
+      const a = zone === 0 ? rep + 1 : low;                          // 组块上缘/下缘（原数组坐标）
+      const strip = !isGroupSrc && row.depth === 0 && !!srcTag;      // 顶层缝隙旁的叶子 = 出一层
+      return { kind: "gap", a, strip };
+    }
+    if (zone === 1) return null;                                     // 叶子行中段 = 零反馈
+    const a = zone === 0 ? row.leaf! + 1 : row.leaf!;
+    const strip = !isGroupSrc && row.depth === 0 && !!srcTag;
+    return { kind: "gap", a, strip };
+  };
+
+  /** 指示器更新：幂等重设（先清后画），合法目标才显示。 */
+  const updateTreeDropIndicator = (x: number, y: number) => {
+    const cont = treeContRef.current;
+    const line = dndLineRef.current;
+    const d = treeDragRef.current;
+    if (!cont || !line || !d) return;
+    clearInto();
+    treeHoverRef.current = null;
+    const cr = cont.getBoundingClientRect();
+    if (y < cr.top || y > cr.bottom) { line.classList.remove("show"); return; }
+    const rows = treeRowsRef.current;
+    const row = rows.find(r => y >= r.top && y < r.bottom) ?? null;
+    if (row && row.prompt) { line.classList.remove("show"); return; }
+    const zone: 0 | 1 | 2 = !row ? 1
+      : (y - row.top) / (row.bottom - row.top) < 0.25 ? 0
+        : (y - row.top) / (row.bottom - row.top) > 0.75 ? 2 : 1;
+    const spec = resolveDrop(row, zone, d);
+    if (!spec) { line.classList.remove("show"); return; }
+    treeHoverRef.current = spec;
+    const toContent = (vy: number) => vy - cr.top + cont.scrollTop;
+    if (spec.kind === "into") {
+      line.classList.remove("show");
+      row!.el.classList.add("tree-dnd-into");
+      intoElRef.current = row!.el;
+      return;
+    }
+    let vy: number;
+    if (spec.kind === "blank") {
+      const vis = rows.filter(r => !r.prompt);
+      const last = vis[vis.length - 1];
+      if (!last) { line.classList.remove("show"); return; }
+      vy = last.bottom;
+    } else {
+      vy = zone === 0 ? row!.top : row!.bottom;
+    }
+    line.style.top = `${toContent(vy) - 1}px`;
+    line.classList.add("show");
+  };
+
+  /** 落盘：一次 pushHistory；splice + 前缀改写；下标迁移（选中集/rects/手柄盒同步）；
+   * 换父时路径态（收起组/重命名/已进入组）跟随迁移。 */
+  const commitTreeDrop = (d: NonNullable<typeof treeDragRef.current>) => {
+    const spec = treeHoverRef.current;
+    if (!spec) return;
+    const dd = draftRef.current;
+    if (!dd) return;
+    pushHistory();
+    pendingRectsRef.current = null;          // 重排后旧下标补报作废（下标已本地迁移）
+    const arr = dd.widgets;
+    const orig = arr.slice();
+    const block = d.srcs.map(i => arr[i]);
+    const sorted = [...d.srcs].sort((a, b) => a - b);
+    const at0 = spec.kind === "into" ? grpBounds(arr, spec.path).rep + 1 : spec.a;   // 原数组锚点
+    for (let k = sorted.length - 1; k >= 0; k--) arr.splice(sorted[k], 1);
+    // 锚点折算：原坐标 → 抽出后坐标（散布组天然成立）
+    const k2 = Math.max(0, Math.min(arr.length, at0 - sorted.filter(s => s < at0).length));
+    arr.splice(k2, 0, ...block);
+    if (spec.kind === "into") {
+      for (const w of block) {
+        const gw = w as GroupedWidget;
+        gw.group = d.path != null && gw.group ? `${spec.path}/${gw.group}` : spec.path;
+      }
+    } else if (spec.strip) {
+      for (const w of block) {
+        const gw = w as GroupedWidget;
+        if (!gw.group) continue;
+        const cut = gw.group.lastIndexOf("/");
+        if (cut < 0) delete gw.group;
+        else gw.group = gw.group.slice(0, cut);   // 出一层（拍板：剥最后一段）
+      }
+    }
+    // 下标迁移：old → new
+    const map = new Map<number, number>();
+    arr.forEach((w, ni) => map.set(orig.indexOf(w), ni));
+    const newRects = arr.map(w => rectsRef.current[orig.indexOf(w)] ?? null);
+    rectsRef.current = newRects;
+    setRects(newRects);
+    setSelected(prev => (prev != null ? map.get(prev) ?? null : prev));
+    setMulti(prev => prev.map(i => map.get(i) ?? i));
+    if (spec.kind === "into" && d.path != null) {
+      const P = d.path, T = spec.path;
+      if (closedGrp.size) {
+        setClosedGrp(new Set([...closedGrp].map(p =>
+          p === P || p.startsWith(P + "/") ? T + p.slice(P.length) : p)));
+      }
+      if (renaming && (renaming.path === P || renaming.path.startsWith(P + "/"))) setRenaming(null);
+      if (grpEnteredRef.current === P || grpEnteredRef.current.startsWith(P + "/")) enterGrp("");
+    }
+    setDraft({ ...dd });
+    onChange();
+  };
 
   // 画布 iframe：/?preview=1，等它 postMessage 回报各部件的真实几何
   const pushPreview = useCallback(() => {
@@ -541,7 +790,8 @@ export default function EditorPage({ shared }: { shared: Shared }) {
       if (d?.type === "hwobs-rects" && Array.isArray(d.rects)) {
         // 拖动中途来的补报（别处实时数据变了）先挂起：直接 setRects 会让
         // React 把手柄盒拽回旧位置，盖掉正在跟手的吸附位。松手后补应用。
-        if (dragRef.current) { pendingRectsRef.current = { rects: d.rects, prompt: d.prompt ?? null }; return; }
+        // U3：图层树拖拽期间同样挂起（拖拽中零草稿变更，行盒不动）。
+        if (dragRef.current || treeDragRef.current) { pendingRectsRef.current = { rects: d.rects, prompt: d.prompt ?? null }; return; }
         setRects(d.rects);
         setPromptRect(d.prompt ?? null);
       }
@@ -709,6 +959,7 @@ export default function EditorPage({ shared }: { shared: Shared }) {
     if (type === "text") Object.assign(base, { type, text: "{cpu.usage}%" });
     if (type === "panel") Object.assign(base, { type });
     d.widgets.push(base as unknown as Widget);
+    pushHistory();   // B2 穷尽表产出：添加件此前不入栈，验收②"添加件那步还在栈里"的前提
     setDraft({ ...d });
     setSelected(n);
     setMulti([n]);   // 新部件取代之前的多选
@@ -1139,6 +1390,16 @@ export default function EditorPage({ shared }: { shared: Shared }) {
   // 方向键微调 · Shift+1 适应 · Shift+0 100% · 空格 临时抓手
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // U3：图层树拖拽中 Esc = 取消（零反馈不落盘），优先于一切快捷键
+      if (treeDragRef.current?.active) {
+        treeDragRef.current = null;
+        setTreeDragging(null);
+        treeHoverRef.current = null;
+        dndLineRef.current?.classList.remove("show");
+        if (intoElRef.current) { intoElRef.current.classList.remove("tree-dnd-into"); intoElRef.current = null; }
+        document.body.style.cursor = "";
+        return;
+      }
       const t = e.target as HTMLElement;
       const typing = !!t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
       const ctrl = e.ctrlKey || e.metaKey;
@@ -1217,15 +1478,23 @@ export default function EditorPage({ shared }: { shared: Shared }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected, selPrompt, save, undoEdit, redoEdit]);
 
-  // 菜单开着时，点哪儿都先关掉（菜单自己 stopPropagation）
+  // 菜单开着时，点哪儿都先关掉（菜单自己 stopPropagation mousedown）。
+  // wheel 目标在弹层子树内 = 用户在菜单里滚动浏览，不关（B1）；画布等其余
+  // 区域滚轮仍立即关闭（右键菜单的既有语义原样保留）。
   useEffect(() => {
     if (!ctxMenu && !addOpen) return;
     const close = () => { setCtxMenu(null); setAddOpen(false); };
+    const onWheel = (e: WheelEvent) => {
+      const path = e.composedPath();
+      const am = addMenuRef.current, cm = ctxMenuRef.current;
+      if ((am && path.includes(am)) || (cm && path.includes(cm))) return;
+      close();
+    };
     window.addEventListener("mousedown", close);
-    window.addEventListener("wheel", close, { passive: true });
+    window.addEventListener("wheel", onWheel, { passive: true });
     return () => {
       window.removeEventListener("mousedown", close);
-      window.removeEventListener("wheel", close);
+      window.removeEventListener("wheel", onWheel);
     };
   }, [ctxMenu, addOpen]);
 
@@ -1533,6 +1802,57 @@ export default function EditorPage({ shared }: { shared: Shared }) {
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
     };
+  }, []);
+
+  // 图层面板右缘把手：与属性面板左缘把手同一套，方向镜像（右拖变宽）。松手记进 localStorage。
+  useEffect(() => {
+    const move = (e: MouseEvent) => {
+      const d = layersDragRef.current;
+      if (!d) return;
+      setLayersW(Math.max(LAYERS_W_MIN, Math.min(LAYERS_W_MAX, d.w + (e.clientX - d.x))));
+    };
+    const up = () => {
+      if (!layersDragRef.current) return;
+      layersDragRef.current = null;
+      localStorage.setItem(LAYERS_W_KEY, String(layersWRef.current));
+      document.body.style.cursor = "";
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+    return () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+  }, []);
+
+  // U3 图层树拖拽：pending 位移 >4px 激活（保住点击选中语义）；mousemove 幂等重设
+  // 指示器；松手按最后合法目标落盘（一次 pushHistory），非法/无目标零反馈纯清理。
+  useEffect(() => {
+    const move = (e: MouseEvent) => {
+      const d = treeDragRef.current;
+      if (!d) return;
+      if (!d.active) {
+        if (Math.abs(e.clientX - d.startX) < 4 && Math.abs(e.clientY - d.startY) < 4) return;
+        d.active = true;
+        setTreeDragging({ srcs: d.srcs, path: d.path });
+        cacheTreeRows();
+        document.body.style.cursor = "grabbing";
+      }
+      updateTreeDropIndicator(e.clientX, e.clientY);
+    };
+    const up = () => {
+      const d = treeDragRef.current;
+      if (!d) return;
+      treeDragRef.current = null;
+      try { if (d.active) commitTreeDrop(d); } finally { clearTreeDnd(); }
+    };
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+    return () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 拖动：iframe 宿主节点 + 手柄盒都直改 DOM（不重渲染），松手才进草稿。
@@ -1980,7 +2300,8 @@ export default function EditorPage({ shared }: { shared: Shared }) {
 
   if (!draft || !metrics) {
     return (
-      <main className="fixed inset-y-0 right-0 left-72 z-10 flex items-center justify-center bg-background">
+      <main className="fixed inset-y-0 right-0 z-10 flex items-center justify-center bg-background transition-[left] duration-300 ease-in-out motion-reduce:transition-none"
+        style={{ left: "var(--nav-w, 18rem)" }}>
         <span className="text-sm text-default-500">载入中…</span>
       </main>
     );
@@ -2031,17 +2352,21 @@ export default function EditorPage({ shared }: { shared: Shared }) {
       const on = selected === i;
       return (
         <div key={i}
+          data-tree-row="leaf" data-leaf={i} data-depth={depth}
           className={`group flex h-11 cursor-default items-center gap-3 rounded-xl pr-1.5 text-[15px] transition-colors duration-150 ${
-            on ? "bg-[#2a2a2e] text-foreground" : "text-default-500 hover:bg-white/[0.04] hover:text-foreground"}`}
+            on ? "bg-[#2a2a2e] text-foreground" : "text-default-500 hover:bg-white/[0.04] hover:text-foreground"} ${
+            treeDragging?.srcs.includes(i) ? "opacity-40" : ""}`}
           style={{ paddingLeft: 12 + depth * 16 }}
           onMouseDown={e => {
             if (spaceRef.current) return;
             if (e.shiftKey || e.ctrlKey || e.metaKey) selectWidget(i, true);
             else selectSingle(i);
+            // treeDragPending(e, [i]);   // U3 暂停：恢复 U3 时取消本行注释
           }}
           onContextMenu={e => openCtx(e, "widget", i)}>
           <Icon size={17} strokeWidth={1.8} className={`shrink-0 ${w.visible === false ? "opacity-30" : "opacity-70"}`} />
-          <span className={`min-w-0 flex-1 truncate ${w.visible === false ? "opacity-40" : ""}`}>{layerName(w, widgetLabel)}</span>
+          <span className={`min-w-0 flex-1 truncate ${w.visible === false ? "opacity-40" : ""}`}
+            title={layerName(w, widgetLabel)}>{layerName(w, widgetLabel)}</span>
           <span className={`shrink-0 items-center gap-0.5 ${w.visible === false || (w as NodeBase).locked ? "flex" : "hidden group-hover:flex"}`}>
             <button type="button" title={w.visible === false ? "显示" : "隐藏（画布与叠加层都不画）"}
               className={`grid size-6 cursor-pointer place-items-center rounded-lg hover:bg-white/[0.08] ${w.visible === false ? "text-warning" : "text-default-500"}`}
@@ -2069,11 +2394,13 @@ export default function EditorPage({ shared }: { shared: Shared }) {
     const active = members.length > 0 && members.every(j => multi.includes(j));
     const anyVisible = members.some(j => (draft.widgets[j] as NodeBase).visible !== false);
     const allLocked = members.length > 0 && members.every(j => (draft.widgets[j] as NodeBase).locked);
-    return (
+      return (
       <div key={p}>
         <div
+          data-tree-row="group" data-group={p} data-depth={depth}
           className={`group flex h-11 cursor-default items-center gap-1.5 rounded-xl pr-1.5 text-[15px] transition-colors duration-150 ${
-            active ? "bg-[#2a2a2e] text-foreground" : "text-default-500 hover:bg-white/[0.04] hover:text-foreground"}`}
+            active ? "bg-[#2a2a2e] text-foreground" : "text-default-500 hover:bg-white/[0.04] hover:text-foreground"} ${
+            treeDragging?.path === p ? "opacity-40" : ""}`}
           style={{ paddingLeft: 6 + depth * 16 }}
           title="点击选中整组 · 箭头展开/收起"
           onMouseDown={e => {
@@ -2087,6 +2414,7 @@ export default function EditorPage({ shared }: { shared: Shared }) {
             setMulti(members);
             setSelected(members[members.length - 1]);
             setSelPrompt(false);
+            // treeDragPending(e, members, p);   // U3 暂停：恢复 U3 时取消本行注释
           }}
           onContextMenu={e => openCtx(e, "widget", members[members.length - 1])}>
           <button type="button" title={open ? "收起" : "展开"}
@@ -2111,7 +2439,8 @@ export default function EditorPage({ shared }: { shared: Shared }) {
               className="min-w-0 flex-1 rounded-md bg-black/30 px-1.5 py-0.5 text-[13px] text-foreground outline-none"
               placeholder="组名字（留空恢复默认）" />
           ) : (
-            <span className="min-w-0 flex-1 truncate">
+            <span className="min-w-0 flex-1 truncate"
+              title={`${draft.groups?.[p] ?? "小组"} · ${members.length} 项`}>
               {draft.groups?.[p] ?? "小组"} · {members.length} 项
             </span>
           )}
@@ -2163,7 +2492,8 @@ export default function EditorPage({ shared }: { shared: Shared }) {
     : [{ id: "all", label: "全部部件", types: ADD_TYPES.map(([t]) => t) }];
 
   return (
-    <main className="fixed inset-y-0 right-0 left-72 z-10 flex flex-col bg-background">
+    <main className="fixed inset-y-0 right-0 z-10 flex flex-col bg-background transition-[left] duration-300 ease-in-out motion-reduce:transition-none"
+      style={{ left: "var(--nav-w, 18rem)" }}>
       {/* 顶栏：NP 式 —— 无边框，控件装进暗色药丸分组，靠表面亮度分层 */}
       <header className="flex h-16 shrink-0 items-center gap-3 px-6">
         <h1 className="mr-1 text-lg font-bold text-white">版式编辑</h1>
@@ -2209,9 +2539,11 @@ export default function EditorPage({ shared }: { shared: Shared }) {
       )}
 
       <div className="flex min-h-0 flex-1">
-        {/* 图层面板（Figma 左栏）：顶层在上；悬停出层级/删除按钮；右键有菜单 */}
+        {/* 图层面板（Figma 左栏）：顶层在上；悬停出层级/删除按钮；右键有菜单。
+            宽度可拖（右缘把手），折叠时整体不渲染、宽度记忆只存 localStorage */}
         {layersOpen && (
-        <aside className="flex w-60 shrink-0 flex-col px-3 py-2">
+        <>
+        <aside className="flex shrink-0 flex-col px-3 py-2" style={{ width: layersW }}>
           <div className="flex items-center justify-between px-2 pb-2 pt-1">
             <span className="text-xs font-bold text-primary">图层</span>
             <span className="font-jetbrains text-xs text-default-500">{draft.widgets.length}</span>
@@ -2244,7 +2576,8 @@ export default function EditorPage({ shared }: { shared: Shared }) {
                 onMouseDown={() => { if (!spaceRef.current) { setSelected(null); setSelPrompt(true); } }}
                 onContextMenu={e => openCtx(e, "prompt", -1)}>
                 <Code size={17} strokeWidth={1.8} className="shrink-0 opacity-70" />
-                <span className="min-w-0 flex-1 truncate">命令行装饰 · {draft.prompt.user || "user@host"}</span>
+                <span className="min-w-0 flex-1 truncate"
+                  title={`命令行装饰 · ${draft.prompt.user || "user@host"}`}>命令行装饰 · {draft.prompt.user || "user@host"}</span>
                 <button type="button" title="删除（Delete）" className="grid size-7 cursor-pointer place-items-center rounded-lg opacity-0 hover:bg-danger/20 hover:text-danger group-hover:opacity-100"
                   onMouseDown={e => e.stopPropagation()} onClick={removePrompt}><Trash2 size={14} /></button>
               </div>
@@ -2253,7 +2586,7 @@ export default function EditorPage({ shared }: { shared: Shared }) {
           {/* 添加部件：NP「更多」式的大药丸，菜单浮在其上方 */}
           <div className="relative p-1">
             {addOpen && (
-              <div className="absolute bottom-13 left-0 z-50 max-h-[min(72vh,560px)] w-full overflow-y-auto rounded-2xl bg-[#26262a] p-1.5 shadow-2xl"
+              <div ref={addMenuRef} className="absolute bottom-13 left-0 z-50 max-h-[min(72vh,560px)] w-full overflow-y-auto rounded-2xl bg-[#26262a] p-1.5 shadow-2xl"
                 onMouseDown={e => e.stopPropagation()}>
                 {addSections.map(sec => {
                   const collapsed = collapsedCats.has(sec.id);
@@ -2318,6 +2651,18 @@ export default function EditorPage({ shared }: { shared: Shared }) {
             </button>
           </div>
         </aside>
+        {/* 图层面板右缘：拖这条把手调宽（与属性面板左缘把手同款，悬停亮蓝提示可拖） */}
+        <div
+          className="w-1.5 shrink-0 cursor-col-resize select-none transition-colors hover:bg-primary/50"
+          title="按住拖动调整面板宽度"
+          onMouseDown={e => {
+            e.preventDefault();
+            e.stopPropagation();
+            layersDragRef.current = { x: e.clientX, w: layersW };
+            document.body.style.cursor = "col-resize";
+          }}
+        />
+        </>
         )}
 
         {/* 画布工作区 */}
@@ -2479,7 +2824,7 @@ export default function EditorPage({ shared }: { shared: Shared }) {
 
           {/* 右键上下文菜单：NP popover 语言 —— 大圆角、无边框、行高 44px */}
           {ctxMenu && (
-            <div className="fixed z-[999] w-56 rounded-2xl bg-[#26262a] p-1.5 shadow-2xl"
+            <div ref={ctxMenuRef} className="fixed z-[999] w-56 rounded-2xl bg-[#26262a] p-1.5 shadow-2xl"
               style={{ left: Math.min(ctxMenu.x, window.innerWidth - 230), top: Math.min(ctxMenu.y, window.innerHeight - 300) }}
               onMouseDown={e => e.stopPropagation()}>
               {ctxMenu.kind === "widget" ? (
