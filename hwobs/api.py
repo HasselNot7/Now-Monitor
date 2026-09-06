@@ -8,12 +8,14 @@
   400 + {"saved": False, "errors": [...]} 形状，而不是 FastAPI 默认的 422。
 
 静态页：
-- `/` 永远是叠加层 web/monitor.html（OBS 填的就是它，URL 不能变）。
+- `/` 永远是叠加层 web/monitor.html（OBS 填的就是它，URL 不能变）；
+  运行时逻辑在 /overlay/*（web/overlay/ 的 ES module），no-cache 与 `/` 同待遇。
 - `/admin` 优先服务 frontend/dist（React 构建产物）；没构建过就回落旧
   vanilla 管理页（过渡期并存，前端移植完成后删除）。
 """
 
 import json
+import mimetypes
 
 from fastapi import Body, FastAPI, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -24,7 +26,12 @@ from .aida import controller
 from .sources import aida64, winapi
 
 HTML_FILE = paths.resource("web/monitor.html")
+OVERLAY_DIR = paths.resource("web/overlay")   # 叠加层运行时的 ES module 目录
 FRONTEND_DIST = paths.resource("frontend/dist")
+
+# StaticFiles 用 mimetypes 猜 .js 的 Content-Type；Windows 注册表可能把它映成
+# text/plain，而 <script type="module"> 严格校验 MIME，错了模块直接拒载。
+mimetypes.add_type("text/javascript", ".js")
 
 MAX_BODY = 64 * 1024      # 版式配置远小于这个数，超了就是乱发
 
@@ -315,9 +322,15 @@ def create_app() -> FastAPI:
     async def no_cache_admin_html(request, call_next):
         response = await call_next(request)
         p = request.url.path
-        if p == "/" or p == "/admin" or p == "/admin/" or p.endswith(".html"):
+        if (p == "/" or p == "/admin" or p == "/admin/"
+                or p.startswith("/overlay/") or p.endswith(".html")):
             response.headers["Cache-Control"] = "no-cache"
         return response
+
+    # 叠加层运行时模块（monitor.html 壳引用 /overlay/main.js）。比照 /admin：
+    # 目录缺失（比如打包漏带）时优雅降级 —— 服务照常起，只是页面拿不到模块。
+    if (OVERLAY_DIR / "main.js").is_file():
+        app.mount("/overlay", StaticFiles(directory=OVERLAY_DIR), name="overlay")
 
     if (FRONTEND_DIST / "index.html").is_file():
         app.mount("/admin", StaticFiles(directory=FRONTEND_DIST, html=True), name="admin")

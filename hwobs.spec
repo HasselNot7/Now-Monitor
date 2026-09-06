@@ -22,6 +22,7 @@ ICON = str(ROOT / "assets" / "app.ico")   # python scripts/make_icon.py 生成
 
 datas = [
     ('web/monitor.html', 'web'),
+    ('web/overlay', 'web/overlay'),   # 叠加层运行时 ES module（monitor.html 壳引用）
     # 模板库不再随包分发（内置模板已删，用户自己存/导入）；
     # overlays/monitor.json 是各人机器上的运行时版式，本来就不进包
     ('hwobs/registry/metrics.json', 'hwobs/registry'),
