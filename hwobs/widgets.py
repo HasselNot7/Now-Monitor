@@ -527,7 +527,7 @@ WIDGETS = {
     "divider": {
         "label": "分隔线", "icon": "minus",
         "summary": "横 / 竖分隔线，粗细与颜色可调（线条颜色走外观「次要」）",
-        "defaults": {"w": 200},
+        "defaults": {"w": 200, "thickness": 2},
         "style_schema": COMMON_STYLE,
         "props_schema": DIVIDER_PROPS,
         "height": divider_height,

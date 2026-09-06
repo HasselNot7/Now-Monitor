@@ -100,6 +100,7 @@ python -m hwobs --open            # 管理页 http://localhost:8765/admin
 |:---:|:---|
 | 起后端 | `python -m hwobs`（localhost:8765） |
 | 前端开发 | `cd frontend && npm ci && npm run dev`（5173，API 自动代理到 8765） |
+| 默认值对账 | `python scripts/check-defaults.py`（widgets.py defaults ↔ JS 兜底 / props_schema，改默认值后跑） |
 | 打包 exe | `python -m pip install -r requirements-dev.txt && python scripts/build.py` |
 
 构建需要 Node.js ≥ 18
