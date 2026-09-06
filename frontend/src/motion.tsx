@@ -1,9 +1,7 @@
 import { AnimatePresence, motion } from "framer-motion";
-import { Check, Copy } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { OverlayScrollbarsComponent } from "overlayscrollbars-react";
 import type { OverlayScrollbars } from "overlayscrollbars";
-import { toast } from "@heroui/react";
 
 /** framer-motion 变体：动效跟组件放一起（学 Now Playing，不集中到 variants.ts）。
  * 统一"进比出慢、出比进轻"的手感，时长压在 0.1~0.3s。 */
@@ -45,43 +43,8 @@ export const listItem = {
   show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 320, damping: 30 } },
 } as const;
 
-const iconVariants = {
-  initial: { scale: 1.2, opacity: 0 },
-  animate: { scale: 1, opacity: 1, transition: { duration: 0.15 } },
-  exit: { scale: 0.4, opacity: 0, transition: { duration: 0.12 } },
-} as const;
-
-/** 复制按钮：点一下把文本写进剪贴板，图标 copy→check 互换（NP CopyButton 同款）。
- * 用于 OBS 浏览器源 URL 这类"手选容易错"的地方。 */
-export function CopyButton({ text, label = "复制", size = 15 }: {
-  text: string; label?: string; size?: number;
-}) {
-  const [copied, setCopied] = useState(false);
-  const doCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      toast.success("已复制", { description: text, timeout: 1600 });
-      setTimeout(() => setCopied(false), 1600);
-    } catch {
-      toast.danger("复制失败", { description: "浏览器拒绝了剪贴板权限，请手动选中复制", timeout: 6000 });
-    }
-  };
-  return (
-    <button
-      type="button" onClick={doCopy} title={copied ? "已复制" : label}
-      className="inline-grid size-7 shrink-0 cursor-pointer place-items-center rounded-md text-muted transition-colors hover:bg-white/[0.06] hover:text-foreground">
-      <AnimatePresence mode="wait" initial={false}>
-        {copied
-          ? <motion.span key="check" variants={iconVariants} initial="initial" animate="animate" exit="exit" className="text-success"><Check size={size} /></motion.span>
-          : <motion.span key="copy" variants={iconVariants} initial="initial" animate="animate" exit="exit"><Copy size={size} /></motion.span>}
-      </AnimatePresence>
-    </button>
-  );
-}
-
 /** 主内容滚动区：OverlayScrollbars 深色胶囊滑块 + 上下边缘 mask 渐隐（仅在可滚方向淡出）。
- * Now Playing 的 DefaultLayout 同款手法，比原生滚动条精致一档。 */
+ * Now Playing 的 DefaultLayout 同款手法。 */
 export function ScrollArea({ scrollKey, children }: {
   scrollKey: string;         // 变化即滚回顶部（切视图）
   children: React.ReactNode;

@@ -1,20 +1,21 @@
-import { ProgressBar } from "@heroui/react";
+import { Progress } from "@heroui/progress";
+import { Input } from "@heroui/input";
 import { useState } from "react";
-import type { Shared } from "../App";
-import { Banner, CARD_CLS, Btn, FieldLabel, Hint, Page, SettingsRow, SubTitle } from "../ui";
-import { CopyButton } from "../motion";
+import type { Shared } from "../shared";
+import { Banner, CARD_CLS, Btn, FieldLabel, Hint, Page, SubTitle } from "../ui";
+import CopyButton from "../components/CopyButton";
 import { aidaIssue, TroubleshootModal, troubleshoot } from "../widgets";
 
-type BarColor = "accent" | "success" | "warning" | "danger";
+type BarColor = "primary" | "success" | "warning" | "danger";
 
-/** 连接状态点：v3 Chip 删了 dot 变体，手搓一颗带光晕的小点（NP 在线点同款思路）。
- * 有问题时（onClick）整颗可点，点开排障弹窗。 */
+/** 连接状态点：带光晕的小点（NP 在线点同款思路）。有问题时（onClick）整颗可点，
+ * 点开排障弹窗。 */
 const StateChip = ({ text, kind, onClick }: {
   text: string; kind: "ok" | "warn" | "bad"; onClick?: () => void;
 }) => {
-  const dot = kind === "ok" ? "bg-success shadow-[0_0_8px_var(--success)]"
-    : kind === "warn" ? "bg-warning shadow-[0_0_8px_var(--warning)]"
-      : "bg-danger shadow-[0_0_8px_var(--danger)]";
+  const dot = kind === "ok" ? "bg-success shadow-[0_0_8px_var(--heroui-success)]"
+    : kind === "warn" ? "bg-warning shadow-[0_0_8px_var(--heroui-warning)]"
+      : "bg-danger shadow-[0_0_8px_var(--heroui-danger)]";
   const inner = (
     <span className="inline-flex items-center gap-1.5 text-sm">
       <span className={`size-2 rounded-full ${dot}`} />
@@ -37,16 +38,12 @@ function StatCard({ label, value, sub, progress, progressColor }: {
 }) {
   return (
     <div className={`${CARD_CLS} flex flex-col gap-1.5 p-4`}>
-      <span className="text-xs font-bold text-muted">{label}</span>
+      <span className="text-xs font-bold text-default-500">{label}</span>
       <span className="font-poppins text-2xl font-bold leading-7">{value}</span>
       {sub && <span className="text-xs text-color-desc">{sub}</span>}
       {progress !== undefined && (
-        <ProgressBar aria-label={label} size="sm" className="mt-1"
-          value={Math.min(100, progress)} color={progressColor ?? "accent"}>
-          <ProgressBar.Track>
-            <ProgressBar.Fill />
-          </ProgressBar.Track>
-        </ProgressBar>
+        <Progress aria-label={label} size="sm" className="mt-1"
+          value={Math.min(100, progress)} color={progressColor ?? "primary"} />
       )}
     </div>
   );
@@ -57,7 +54,7 @@ function Row({ k, v, sub }: { k: string; v: React.ReactNode; sub?: string }) {
   return (
     <div className="flex w-full items-center justify-between gap-4 py-1.5">
       <div className="flex flex-col gap-[2px]">
-        <span className="text-sm text-muted">{k}</span>
+        <span className="text-sm text-default-500">{k}</span>
         {sub && <span className="text-xs text-color-desc">{sub}</span>}
       </div>
       <span className="text-right text-sm font-jetbrains tabular-nums">{v}</span>
@@ -87,12 +84,12 @@ export default function StatusPage({ shared }: { shared: Shared }) {
     );
   }
   const shmColor = st.shm_pct > 90 ? "text-danger" : st.shm_pct > 75 ? "text-warning" : "text-foreground";
-  const shmBar: BarColor = st.shm_pct > 90 ? "danger" : st.shm_pct > 75 ? "warning" : "accent";
+  const shmBar: BarColor = st.shm_pct > 90 ? "danger" : st.shm_pct > 75 ? "warning" : "primary";
   const s = st.windows_net_sampler;
   const b = check?.budget;
   const worstPct = b ? Math.round(b.worst_bytes / b.usable * 100) : undefined;
   const worstColor = b && b.worst_bytes > b.usable ? "text-danger" : "text-foreground";
-  const worstBar: BarColor = b && b.worst_bytes > b.usable ? "danger" : "accent";
+  const worstBar: BarColor = b && b.worst_bytes > b.usable ? "danger" : "primary";
   const problems = troubleshoot(st);
 
   return (
@@ -127,7 +124,7 @@ export default function StatusPage({ shared }: { shared: Shared }) {
           {b ? (
             <>
               <Row k="版式需要" v={`${b.count} 个传感器`} />
-              <Row k="最坏占用" v={<span className={b.worst_bytes > b.usable ? "text-danger" : "text-accent"}>
+              <Row k="最坏占用" v={<span className={b.worst_bytes > b.usable ? "text-danger" : "text-primary"}>
                 {b.worst_bytes} / {b.usable} 字节</span>} />
               <Row k="典型占用" v={`${b.typical_bytes} 字节`} />
               <Row k="截断风险" v={b.fits ? <StateChip text="无" kind="ok" />
@@ -137,7 +134,7 @@ export default function StatusPage({ shared }: { shared: Shared }) {
         </DetailCard>
       </div>
 
-      {/* NP Alert faded 同款横幅：OBS 源排障是最高频问题，常驻提醒 */}
+      {/* NP Alert flat 同款横幅：OBS 源排障是最高频问题，常驻提醒 */}
       <Banner end={
         <Btn size="sm" variant="secondary" className="bg-[#27272a]"
           onPress={() => window.open("/", "_blank")}>打开叠加层</Btn>
@@ -145,15 +142,20 @@ export default function StatusPage({ shared }: { shared: Shared }) {
         在 OBS 添加「浏览器」源并填入下方地址；改了版式 OBS 没变化，就点浏览器源上的「刷新缓存」。
       </Banner>
 
-      {/* NP IntegrationCard 同款：URL 输入框 + 复制 + 居中说明 */}
+      {/* NP IntegrationCard 的 PcTab 同款：URL 只读输入框 + 复制按钮 + 居中说明 */}
       <DetailCard title="OBS 设置">
         <div className="flex flex-col gap-2">
-          <FieldLabel>浏览器源 URL</FieldLabel>
-          <div className="flex min-h-11 items-center rounded-xl border border-white/10 bg-[#0e0f12] pl-4 pr-1">
-            <span className="min-w-0 flex-1 truncate font-jetbrains text-sm">{location.origin}/</span>
-            <CopyButton text={`${location.origin}/`} label="复制 URL" />
-          </div>
-          <div className="mt-4 flex items-center justify-center text-sm text-color-desc">
+          <FieldLabel>组件 URL</FieldLabel>
+          <Input
+            className="font-jetbrains"
+            classNames={{ inputWrapper: "pl-4 pr-0" }}
+            isReadOnly
+            endContent={<CopyButton copyContent={`${location.origin}/`} label="复制 URL" />}
+            type="text"
+            value={`${location.origin}/`}
+            variant="bordered"
+          />
+          <div className="w-full mt-5 text-sm text-color-desc flex items-center justify-center">
             将上方内容填写到直播软件的浏览器源 URL 栏
           </div>
         </div>

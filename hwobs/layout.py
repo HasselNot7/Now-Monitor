@@ -9,10 +9,34 @@ v2 之后校验器的几何全部来自配置本身（部件注册表 widgets.py
 """
 
 from . import refs, widgets
+from .widgets import is_color
 
 
 def _known_paths(reg):
     return {m["out"] for m in reg["metrics"] if m.get("out")} | {m["id"] for m in reg["metrics"]}
+
+
+def _node_check(w, errors):
+    """统一 Node 公共字段（所有部件通用的变换与状态）：全部可选，写了就得类型对。
+    rotation 度数绕部件中心；visible=false 渲染器不画；locked 目前只有编辑器消费。"""
+    r = w.get("rotation")
+    if r is not None and (not isinstance(r, (int, float)) or isinstance(r, bool)
+                          or not -360 <= r <= 360):
+        errors.append(f"rotation 需要是 -360~360 的数字（现在是 {r!r}）")
+    for k in ("visible", "locked"):
+        v = w.get(k)
+        if v is not None and not isinstance(v, bool):
+            errors.append(f"{k} 需要是 true / false（现在是 {v!r}）")
+
+
+def _groups_check(cfg, errors):
+    """组显示名表（cfg.groups）：路径 → 名字，纯编辑器层组织信息，渲染器不读。"""
+    groups = cfg.get("groups")
+    if groups is None:
+        return
+    if not isinstance(groups, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) and v for k, v in groups.items()):
+        errors.append(f"groups 需要是 {{组路径: 显示名}} 的非空字符串映射（现在是 {groups!r}）")
 
 
 def _canvas_check(cfg, errors):
@@ -27,6 +51,17 @@ def _canvas_check(cfg, errors):
             or not all(isinstance(v, int) and 0 <= v <= 200 for v in pad)):
         errors.append(f"canvas.padding 必须是 [垂直, 水平] 两个 0~200 的整数（现在是 {pad!r}）")
         pad = [12, 24]
+
+    # 主题：字符串 = 内置主题名（渲染器解析，未知名回退默认，这里不卡死清单）；
+    # 对象 = 自定义色板，值必须是颜色。
+    theme = canvas.get("theme")
+    if theme is not None:
+        if isinstance(theme, dict):
+            bad = {k: v for k, v in theme.items() if not is_color(v)}
+            if bad:
+                errors.append(f"canvas.theme 色板的值需要形如 #rrggbb 的颜色（{bad}）")
+        elif not isinstance(theme, str) or not theme:
+            errors.append(f"canvas.theme 需要主题名或色板对象（现在是 {theme!r}）")
     return width, height, pad[0] * 2
 
 
@@ -66,6 +101,7 @@ def check(cfg, reg=None, plan=None):
     errors, warnings = [], []
 
     width, height, pad_v = _canvas_check(cfg, errors)
+    _groups_check(cfg, errors)
     free = isinstance(cfg.get("canvas"), dict) and cfg["canvas"].get("mode") == "free"
     prompt_h = _prompt_check(cfg, errors, free, width, height)
     used = 0 if free else pad_v + prompt_h
@@ -80,6 +116,7 @@ def check(cfg, reg=None, plan=None):
             referenced += refs.iter_refs(w)
             continue
         w_errors, w_warnings = [], []
+        _node_check(w, w_errors)
         entry["validate"](w, w_errors, w_warnings)
         errors += [f"第 {i+1} 个部件（{w.get('type')}）：{e}" for e in w_errors]
         warnings += [f"第 {i+1} 个部件（{w.get('type')}）：{e}" for e in w_warnings]

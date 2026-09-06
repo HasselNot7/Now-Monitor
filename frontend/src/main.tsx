@@ -1,7 +1,9 @@
-import { Toast } from "@heroui/react";
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { HashRouter } from "react-router-dom";
 import App from "./App";
+import { Provider } from "./Provider";
+import { EnvProvider } from "./contexts/EnvContext";
 import "@fontsource/poppins/400.css";
 import "@fontsource/poppins/500.css";
 import "@fontsource/poppins/600.css";
@@ -12,12 +14,18 @@ import "@fontsource/jetbrains-mono/600.css";
 import "overlayscrollbars/overlayscrollbars.css";
 import "./index.css";
 
-document.documentElement.classList.add("dark");
-
+// HashRouter 而不是 NP 的 BrowserRouter：我们把 dist 挂在 FastAPI 的 /admin 下，
+// 静态文件服务没有 SPA fallback，#/ 路由不需要服务端配合。
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    {/* v3 不需要 HeroUIProvider；Toast 是唯一要挂的出口，placement 对齐旧版右下角 */}
-    <Toast.Provider placement="bottom end" />
-    <App />
+    <EnvProvider>
+      <HashRouter>
+        <Provider>
+          <main className="dark text-foreground w-full h-full">
+            <App />
+          </main>
+        </Provider>
+      </HashRouter>
+    </EnvProvider>
   </React.StrictMode>,
 );

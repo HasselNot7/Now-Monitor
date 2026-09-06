@@ -41,7 +41,7 @@ def iter_refs(node, out=None):
     if isinstance(node, str):
         out.append(node)
     elif isinstance(node, dict):
-        if node.get("type") == "text" and isinstance(node.get("text"), str):
+        if node.get("type") in ("text", "badge") and isinstance(node.get("text"), str):
             out.extend(_text_refs(node["text"]))
         if node.get("type") == "html" and isinstance(node.get("html"), str):
             out.extend(_text_refs(node["html"]))

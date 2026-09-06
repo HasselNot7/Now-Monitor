@@ -125,7 +125,7 @@
     .progress-bar-container { display: flex; align-items: center; gap: 8px; font-size: 15px; }
     .progress-track {
       flex: 1;
-      height: 13px;
+      height: var(--bar-h, 13px);
       background-color: var(--bar-bg);
       border-radius: 2px;
       overflow: hidden;
@@ -172,6 +172,28 @@
     .text-line { font-size: 19px; color: var(--text-color); white-space: nowrap; overflow: hidden; }
     .text-line .tv { color: var(--label-color); }
     .text-line .tmiss { color: var(--subtext-color); }
+
+    .free-value { white-space: nowrap; overflow: hidden; }
+    .free-value .vn { color: var(--label-color); }
+    .free-value .vv { color: var(--text-color); }
+    .free-value .vwarn { color: var(--bar-high); }
+    .free-value .tmiss { color: var(--subtext-color); }
+
+    /* 原子件（Phase 3）：icon / image / divider / badge */
+    .free-icon svg { display: block; }
+    .free-image img { width: 100%; height: 100%; display: block; }
+    .free-image .img-empty {
+      display: flex; width: 100%; height: 100%;
+      align-items: center; justify-content: center;
+      border: 1px dashed var(--subtext-color);
+      color: var(--subtext-color); font-size: 12px;
+    }
+    .free-divider { background: var(--dim-color); }
+    .free-badge {
+      display: inline-flex; align-items: center; white-space: nowrap;
+      background: var(--bar-bg); border-radius: 999px; padding: 3px 12px;
+    }
+    .free-badge .tmiss { color: var(--subtext-color); }
   </style>
 </head>
 <body>
@@ -301,8 +323,72 @@
       ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
     // 几何内联应用：CSS 里的值只是无配置时的兜底，校验器算的是同一份配置数
+
+    // 主题与样式：全部走 CSS 变量级联。主题（canvas.theme）把变量设在 body 上，
+    // 组件级 style 把同名变量设在部件宿主上 —— 内联优先级天然高于 body，
+    // 「全局主题 + 单组件覆盖」不需要任何优先级魔法。变量名映射见 THEME_VARS；
+    // 主题清单单一来源在 hwobs/themes.py，boot 时随 /api/widgets/meta 拿到。
+    const THEME_VARS = {
+      bg: '--bg-color', text: '--text-color', label: '--label-color',
+      chip: '--chip-label', dim: '--dim-color', subtext: '--subtext-color',
+      bar_bg: '--bar-bg', bar_fill: '--bar-fill', high: '--bar-high',
+      prompt_user: '--prompt-user', prompt_symbol: '--prompt-symbol',
+    };
+    let THEME_TABLE = {};   // 主题名 -> {label, vars}，boot 时填充；拿不到就只有渲染器内置默认
+
+    function applyTheme(theme) {
+      let vars = null;
+      if (theme && typeof theme === 'object') vars = theme;
+      else if (typeof theme === 'string' && THEME_TABLE[theme]) vars = THEME_TABLE[theme].vars;
+      if (!vars) return;
+      for (const [k, v] of Object.entries(vars)) {
+        const name = THEME_VARS[k];
+        if (name && typeof v === 'string' && v) document.body.style.setProperty(name, v);
+      }
+    }
+
+    // #rrggbb + 独立透明度（0~100）→ rgba；其余颜色写法原样透出
+    function withAlpha(color, alphaPct) {
+      const m = /^#([0-9a-fA-F]{6})$/.exec(color || '');
+      const a = Math.max(0, Math.min(100, alphaPct == null ? 100 : alphaPct)) / 100;
+      if (!m || a >= 1) return color;
+      const n = parseInt(m[1], 16);
+      return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a.toFixed(3)})`;
+    }
+
+    // 组件级 style（hwobs/widgets.py 的 style_schema 是它的契约）：颜色键重定义
+    // CSS 变量，bg.* 让任意组件长出卡片底。各工厂自己的特有键（brackets 等）自取。
+    function applyStyle(host, w) {
+      const st = w && w.style;
+      if (!st || typeof st !== 'object') return;
+      const set = (name, v) => host.style.setProperty(name, v);
+      if (typeof st.color === 'string' && st.color) set('--text-color', st.color);
+      // "名字/标签色"一个键同时管卡片标题与 chips 名字（两处原本是两个变量）
+      if (typeof st.label === 'string' && st.label) { set('--label-color', st.label); set('--chip-label', st.label); }
+      if (typeof st.accent === 'string' && st.accent) set('--bar-fill', st.accent);
+      if (typeof st.high === 'string' && st.high) set('--bar-high', st.high);
+      if (typeof st.track === 'string' && st.track) set('--bar-bg', st.track);
+      // 条粗：卡片进度条轨道高度（.progress-track 消费）；进度条原子件的粗细走几何 height
+      if (Number.isFinite(st.bar_h)) set('--bar-h', Math.max(2, Math.min(60, st.bar_h)) + 'px');
+      if (typeof st.dim === 'string' && st.dim) set('--dim-color', st.dim);
+      if (typeof st.opacity === 'number' && Number.isFinite(st.opacity)) {
+        host.style.opacity = Math.max(0.05, Math.min(1, st.opacity));
+      }
+      const bg = st.bg;
+      if (bg && typeof bg === 'object' && typeof bg.color === 'string' && bg.color) {
+        host.style.backgroundColor = withAlpha(bg.color, bg.alpha);
+        if (Number.isFinite(bg.radius)) host.style.borderRadius = Math.max(0, bg.radius) + 'px';
+        if (Number.isFinite(bg.padding) && bg.padding > 0) host.style.padding = bg.padding + 'px';
+        if (Number.isFinite(bg.border) && bg.border > 0) {
+          host.style.border = bg.border + 'px solid ' +
+            (typeof bg.border_color === 'string' && bg.border_color ? bg.border_color : 'rgba(255,255,255,0.12)');
+        }
+      }
+    }
+
     function applyCanvas(canvas) {
       if (!canvas) return;
+      applyTheme(canvas.theme);
       const free = canvas.mode === 'free';
       document.body.classList.toggle('free', free);
       document.body.classList.toggle('transparent', !!canvas.transparent);
@@ -328,6 +414,10 @@
     // --- cards：指标卡片网格 ------------------------------------------------
 
     function makeCards(w) {
+      const st = w.style || {};
+      const brackets = st.brackets !== false;      // [ ] 装饰可关
+      const sparkW = Math.max(40, Math.min(300, st.spark_w ?? SPARK_W));
+      const sparkH = Math.max(10, Math.min(60, st.spark_h ?? 17));
       const states = {};
       const grid = el('div', 'monitor-grid');
       grid.style.gridTemplateColumns = `repeat(${w.cols ?? 4}, minmax(0, 1fr))`;
@@ -336,19 +426,29 @@
         const card = el('div', 'metric-card');
         card.dataset.key = c.key;
         const value = el('span', 'metric-value', [text('--')]);
+        const header = el('div', 'metric-header',
+          [el('span', 'metric-label', [text(c.label)]), value]);
+        if (Number.isFinite(st.title_size)) header.style.fontSize = st.title_size + 'px';
         const bar = el('div', 'progress-fill');
         const subText = el('span', null, [text('--')]);
-        const spark = el('div', 'spark');
-        card.appendChild(el('div', 'metric-header',
-          [el('span', 'metric-label', [text(c.label)]), value]));
-        card.appendChild(el('div', 'progress-bar-container', [
-          el('span', null, [text('[')]),
-          el('div', 'progress-track', [bar]),
-          el('span', null, [text(']')]),
-        ]));
-        card.appendChild(el('div', 'metric-sub', [spark, subText]));
+        // 迷你曲线底盒只在配了 spark 指标时才画（空深色盒子没有意义）；
+        // style.spark_bg=false 去掉深底，让曲线直接浮在画布上
+        const spark = c.spark ? el('div', 'spark') : null;
+        if (spark) {
+          spark.style.flex = `0 0 ${sparkW}px`;
+          spark.style.height = sparkH + 'px';
+          if (st.spark_bg === false) spark.style.background = 'transparent';
+        }
+        card.appendChild(header);
+        // 进度条行：默认带 [ ] 括号（老观感），style.brackets=false 时只留轨道
+        const barRow = el('div', 'progress-bar-container');
+        if (brackets) barRow.appendChild(el('span', null, [text('[')]));
+        barRow.appendChild(el('div', 'progress-track', [bar]));
+        if (brackets) barRow.appendChild(el('span', null, [text(']')]));
+        card.appendChild(barRow);
+        card.appendChild(el('div', 'metric-sub', [...(spark ? [spark] : []), subText]));
         grid.appendChild(card);
-        states[c.key] = { el: card, value, bar, subText, spark,
+        states[c.key] = { el: card, value, bar, subText, spark, sparkW,
                           barMetric: c.bar, barFull: c.bar_full,
                           valueDef: c.value, subDef: c.sub, sparkMetric: c.spark };
         if (c.spark && !history[c.spark]) history[c.spark] = { buf: [], sampled: 0 };
@@ -373,7 +473,8 @@
             // 次要行宽度随数值变（显存 10.0GB、核心 2000MHz），放不下就降一号。
             // 用隐藏探针恒按正常字号量：直接量元素会在 14px/12.5px 两种状态间来回跳。
             probe.textContent = c.subText.textContent;
-            const room = c.subText.parentElement.clientWidth - SPARK_W - SUB_GAP;
+            const room = c.subText.parentElement.clientWidth
+              - (c.sparkMetric ? c.sparkW + SUB_GAP : 0);
             c.el.classList.toggle('tight', probe.scrollWidth > room);
 
             if (c.sparkMetric) {
@@ -411,6 +512,7 @@
       const host = el('div', 'chips');
       host.style.fontSize = (w.font ?? 15) + 'px';
       host.style.marginTop = (w.margin_top ?? 10) + 'px';
+      if (w.style && Number.isFinite(w.style.gap)) host.style.gap = w.style.gap + 'px';
       host.dataset.fit = w.fit || 'none';
       document.body.appendChild(host);
 
@@ -435,39 +537,46 @@
 
     // --- text：自定义文本行，{输出路径} 占位符插值 ------------------------------
 
+    // 按 {路径} 切开：字面量与值交替。text 与 badge 共用这套编译/渲染。
+    function compileParts(src) {
+      const parts = [];
+      let last = 0;
+      const s = String(src || '');
+      for (const m of s.matchAll(TEXT_REF_RX)) {
+        if (m.index > last) parts.push({ lit: s.slice(last, m.index) });
+        parts.push({ ref: m[1] });
+        last = m.index + m[0].length;
+      }
+      if (last < s.length) parts.push({ lit: s.slice(last) });
+      return parts;
+    }
+
+    function partsToNodes(parts) {
+      return parts.map(p => {
+        if (p.lit !== undefined) return text(p.lit);
+        if (PSEUDO_REFS[p.ref]) {
+          const pseudo = el('span', 'tv');
+          pseudo.textContent = PSEUDO_REFS[p.ref]();
+          return pseudo;
+        }
+        const v = HW ? dig(HW, p.ref) : null;
+        const mt = meta({ metric: p.ref });
+        const span = el('span', v == null ? 'tmiss' : 'tv');
+        span.textContent = txt(v, mt);
+        return span;
+      });
+    }
+
     function makeText(w) {
       const line = el('div', 'text-line');
       line.style.fontSize = (w.size ?? 19) + 'px';
       line.style.marginTop = (w.margin_top ?? 0) + 'px';
       document.body.appendChild(line);
-
-      // 按 {路径} 切开：字面量与值交替。值用文本节点拼装，
-      // 配置里就算混进了 HTML 也不会被执行。
-      const parts = [];
-      let last = 0;
-      const src = w.text || '';
-      for (const m of src.matchAll(TEXT_REF_RX)) {
-        if (m.index > last) parts.push({ lit: src.slice(last, m.index) });
-        parts.push({ ref: m[1] });
-        last = m.index + m[0].length;
-      }
-      if (last < src.length) parts.push({ lit: src.slice(last) });
-
+      // 配置里就算混进了 HTML 也不会被执行（值走文本节点拼装）
+      const parts = compileParts(w.text);
       return {
         update() {
-          line.replaceChildren(...parts.map(p => {
-            if (p.lit !== undefined) return text(p.lit);
-            if (PSEUDO_REFS[p.ref]) {
-              const pseudo = el('span', 'tv');
-              pseudo.textContent = PSEUDO_REFS[p.ref]();
-              return pseudo;
-            }
-            const v = HW ? dig(HW, p.ref) : null;
-            const mt = meta({ metric: p.ref });
-            const span = el('span', v == null ? 'tmiss' : 'tv');
-            span.textContent = txt(v, mt);
-            return span;
-          }));
+          line.replaceChildren(...partsToNodes(parts));
         }
       };
     }
@@ -498,6 +607,11 @@
       if (w.w) host.style.width = w.w + 'px';
       const track = el('div', 'fp-track');
       track.style.height = (w.height ?? 10) + 'px';
+      // style.radius 覆盖圆角（schema 里的键之前没有消费者，CSS 只留 4px 兜底）
+      const st = w.style || {};
+      if (Number.isFinite(st.radius)) {
+        track.style.borderRadius = Math.max(0, Math.min(20, st.radius)) + 'px';
+      }
       const fill = el('div', 'fp-fill');
       track.appendChild(fill);
       host.appendChild(track);
@@ -595,6 +709,7 @@
       const size = Math.max(48, w.size ?? 120);
       const ring = Math.max(2, w.ring ?? 10);
       const label = typeof w.label === 'string' ? w.label : (w.label ? '' : null);
+      const showValue = !(w.style && w.style.show_value === false);
       const host = el('div', 'free-gauge');
       host.style.width = size + 'px';
       host.style.setProperty('--gauge-size', size + 'px');
@@ -624,7 +739,7 @@
       const mid = el('span', 'gauge-mid');
       mid.style.fontSize = Math.max(12, Math.round(size / 5)) + 'px';
       const val = el('span', 'tv', [text('--')]);
-      mid.appendChild(val);
+      if (showValue) mid.appendChild(val);
       host.append(svg, mid);
       if (label !== null) {
         const lab = el('span', 'gauge-label', [text(label)]);
@@ -645,8 +760,203 @@
             pct = Math.max(0, Math.min(100, (v - lo) / (hi - lo) * 100));
           }
           arc.setAttribute('stroke-dashoffset', c * (1 - pct / 100));
-          val.textContent = txt(v, mt);
+          if (showValue) val.textContent = txt(v, mt);
           host.classList.toggle('high', isHigh(v, mt.warn));
+        },
+      };
+    }
+
+    // --- spark：独立迷你曲线（canvas 面积图，窗口内峰值定标） ----------------------
+    // 颜色跟随主题/style（--bar-fill / --bar-high），每秒从画布上的计算样式现读，
+    // 主题切色不用重建部件。fill=false 时只描线不填充。
+
+    function cssVar(host, name, fallback) {
+      const v = getComputedStyle(host).getPropertyValue(name).trim();
+      return v || fallback;
+    }
+
+    function makeSpark(w) {
+      const W = Math.max(40, w.w ?? 120);
+      const H = Math.max(12, w.h ?? 32);
+      const samples = Math.max(10, Math.min(300, w.samples ?? 30));
+      const fill = !(w.style && w.style.fill === false);
+      const host = el('div', 'free-spark');
+      host.style.width = W + 'px';
+      host.style.height = H + 'px';
+      const cv = document.createElement('canvas');
+      const dpr = window.devicePixelRatio || 1;
+      cv.width = W * dpr;
+      cv.height = H * dpr;
+      cv.style.width = '100%';
+      cv.style.height = '100%';
+      host.appendChild(cv);
+      document.body.appendChild(host);
+      const ctx = cv.getContext('2d');
+      ctx.scale(dpr, dpr);
+      if (!history[w.metric]) history[w.metric] = { buf: [], sampled: 0 };
+      return {
+        update() {
+          const s = history[w.metric];
+          if (s.sampled !== tickSeq) {
+            s.sampled = tickSeq;
+            s.buf.push(HW ? dig(HW, w.metric) : null);
+            while (s.buf.length > samples) s.buf.shift();
+          }
+          drawSparkArea(cv, W, H, s.buf, (byOut.get(w.metric) || {}).warn, fill);
+        },
+      };
+    }
+
+    function drawSparkArea(cv, W, H, hist, warn, fill) {
+      const ctx = cv.getContext('2d');
+      const cFill = cssVar(cv, '--bar-fill', '#a3be8c');
+      const cHigh = cssVar(cv, '--bar-high', '#bf616a');
+      ctx.clearRect(0, 0, W, H);
+      const n = hist.length;
+      if (n < 2) return;
+      const seen = hist.filter(v => v != null);
+      // 按窗口内峰值定标，否则 20% 的负载只有 2px 高，看不出形状
+      const peak = Math.max(20, ...seen);
+      const px = i => (i * W) / (n - 1);
+      const py = v => H - 1 - (Math.max(0, Math.min(peak, v)) / peak) * (H - 2);
+      const colorOf = v => (isHigh(v, warn) ? cHigh : cFill);
+      let run = [];
+      const flush = () => {
+        if (!run.length) return;
+        const x0 = px(run[0].i), x1 = px(run[run.length - 1].i);
+        if (fill) {
+          ctx.beginPath();
+          ctx.moveTo(x0, H);
+          for (const p of run) ctx.lineTo(px(p.i), py(p.v));
+          ctx.lineTo(x1, H);
+          ctx.closePath();
+          ctx.globalAlpha = 0.3;
+          ctx.fillStyle = colorOf(run[run.length - 1].v);
+          ctx.fill();
+          ctx.globalAlpha = 1;
+        }
+        ctx.beginPath();
+        for (let k = 0; k < run.length; k++) {
+          k === 0 ? ctx.moveTo(px(run[k].i), py(run[k].v)) : ctx.lineTo(px(run[k].i), py(run[k].v));
+        }
+        ctx.strokeStyle = colorOf(run[run.length - 1].v);
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        run = [];
+      };
+      hist.forEach((v, i) => { v == null ? flush() : run.push({ i, v }); });
+      flush();
+    }
+
+    // --- bars：柱状条原子件（自由画布） -------------------------------------------
+    // 卡片内嵌迷你曲线的独立形态：canvas 直方图（1px 缝隙，窗口内峰值定标）。
+    // 颜色跟随主题/style（--bar-fill / --bar-high），每秒从画布上的计算样式现读。
+
+    function drawSparkBars(cv, W, H, hist, warn) {
+      const ctx = cv.getContext('2d');
+      const cFill = cssVar(cv, '--bar-fill', '#a3be8c');
+      const cHigh = cssVar(cv, '--bar-high', '#bf616a');
+      ctx.clearRect(0, 0, W, H);
+      const n = hist.length;
+      if (!n) return;
+      // 按窗口内峰值定标，否则 20% 的负载只有 2px 高，看不出形状
+      const peak = Math.max(20, ...hist.filter(v => v != null));
+      const slot = W / n;
+      hist.forEach((v, i) => {
+        if (v == null) return;
+        const h = Math.max(2, v / peak * (H - 1));
+        ctx.fillStyle = isHigh(v, warn) ? cHigh : cFill;
+        ctx.fillRect(i * slot, H - h, Math.max(1, slot - 1), h);
+      });
+    }
+
+    function makeBars(w) {
+      const W = Math.max(40, w.w ?? 120);
+      const H = Math.max(12, w.h ?? 32);
+      const samples = Math.max(10, Math.min(300, w.samples ?? 30));
+      const host = el('div', 'free-bars');
+      host.style.width = W + 'px';
+      host.style.height = H + 'px';
+      const cv = document.createElement('canvas');
+      const dpr = window.devicePixelRatio || 1;
+      cv.width = W * dpr;
+      cv.height = H * dpr;
+      cv.style.width = '100%';
+      cv.style.height = '100%';
+      host.appendChild(cv);
+      document.body.appendChild(host);
+      const ctx = cv.getContext('2d');
+      ctx.scale(dpr, dpr);
+      if (!history[w.metric]) history[w.metric] = { buf: [], sampled: 0 };
+      return {
+        update() {
+          const s = history[w.metric];
+          if (s.sampled !== tickSeq) {
+            s.sampled = tickSeq;
+            s.buf.push(HW ? dig(HW, w.metric) : null);
+            while (s.buf.length > samples) s.buf.shift();
+          }
+          drawSparkBars(cv, W, H, s.buf, (byOut.get(w.metric) || {}).warn);
+        },
+      };
+    }
+
+    // --- panel：纯背景面板（自由画布） --------------------------------------------
+    // 没有数据，就是一块可调底色/圆角/描边的矩形：垫在其他部件后面自己拼卡片。
+    // 层级用编辑器的图层控制把它压到最底。
+
+    function makePanel(w) {
+      const host = el('div', 'free-panel');
+      const bg = (w.style && w.style.bg) || {};
+      host.style.backgroundColor =
+        typeof bg.color === 'string' && bg.color ? withAlpha(bg.color, bg.alpha) : 'rgba(27,29,36,0.85)';
+      host.style.borderRadius = (Number.isFinite(bg.radius) ? Math.max(0, bg.radius) : 12) + 'px';
+      if (Number.isFinite(bg.border) && bg.border > 0) {
+        host.style.border = bg.border + 'px solid ' +
+          (typeof bg.border_color === 'string' && bg.border_color ? bg.border_color : 'rgba(255,255,255,0.10)');
+      }
+      document.body.appendChild(host);
+      return { update() {} };
+    }
+
+    // --- value：数值组原子件（自由画布） -------------------------------------------
+    // 一组指标 + 分隔符，可每项带注册表名字（show_name = chips 观感）。
+    // 与 cards 的 value/sub 用同一套组定义；pair/diff 走现成的文本组装。
+
+    function makeValue(w) {
+      const host = el('div', 'free-value');
+      host.style.fontSize = (w.size ?? 19) + 'px';
+      if (w.align) host.style.textAlign = w.align;
+      if (w.w) host.style.width = w.w + 'px';
+      document.body.appendChild(host);
+      const def = w.metrics || {};
+      const base = { unit: def.unit, digits: def.digits, divide: def.divide };
+      const refsList = (def.metrics || []).map(asRef);
+      const sep = def.sep || ' · ';
+      return {
+        update() {
+          const nodes = [];
+          refsList.forEach((o, i) => {
+            if (i > 0) nodes.push(text(sep));
+            const mt = meta(o);
+            const name = o.label ?? (w.show_name ? mt.name : null);
+            if (name) {
+              const n = el('span', 'vn', [text(name + ' ')]);
+              nodes.push(n);
+            }
+            if (o.pair) {
+              nodes.push(el('span', 'vv', [text(pairText(o) ?? '--')]));
+              return;
+            }
+            if (o.diff) {
+              nodes.push(el('span', 'vv', [text(diffText(o) ?? '--')]));
+              return;
+            }
+            const v = HW ? dig(HW, o.metric) : null;
+            const cls = 'vv' + (isHigh(v, mt.warn) ? ' vwarn' : '') + (v == null ? ' tmiss' : '');
+            nodes.push(el('span', cls, [text(txt(v, mt))]));
+          });
+          host.replaceChildren(...nodes);
         },
       };
     }
@@ -654,8 +964,95 @@
     const WIDGET_TYPES = {
       cards: makeCards, chips: makeChips, text: makeText,
       stat: makeStat, progress: makeProgress, html: makeHtml,
-      gauge: makeGauge,
+      gauge: makeGauge, spark: makeSpark, panel: makePanel, value: makeValue,
+      icon: makeIcon, image: makeImage, divider: makeDivider, badge: makeBadge,
+      bars: makeBars,
     };
+
+    // --- icon：内置线性图标原子件 ------------------------------------------------
+    // 12 个 24×24 线性图标，stroke 跟随文字色（style.color → --text-color）。
+    // 图标清单的校验端在 hwobs/widgets.py 的 ICON_NAMES，两边以名字为契约。
+
+    const ICON_PATHS = {
+      cpu: '<rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1.5v2.5M15 1.5v2.5M9 20v2.5M15 20v2.5M1.5 9H4M1.5 15H4M20 9h2.5M20 15h2.5"/>',
+      temp: '<path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z"/>',
+      power: '<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>',
+      gauge: '<path d="m12 14 4-4"/><path d="M3.34 19a10 10 0 1 1 17.32 0"/>',
+      pulse: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>',
+      wifi: '<path d="M5 13a10 10 0 0 1 14 0"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><path d="M2 8.82a15 15 0 0 1 20 0"/><line x1="12" x2="12.01" y1="20" y2="20"/>',
+      disk: '<line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/>',
+      ram: '<path d="M6 19v-3M10 19v-3M14 19v-3M18 19v-3M8 11V9M16 11V9M12 11V9"/><path d="M2 15h20"/><path d="M2 7a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1Z"/>',
+      clock: '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
+      alert: '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4M12 17h.01"/>',
+      screen: '<rect width="20" height="14" x="2" y="3" rx="2"/><path d="M8 21h8M12 17v4"/>',
+      liquid: '<path d="M12 22a7 7 0 0 0 7-7c0-2-1-3.9-3-5.5s-3.5-4-4-6.5c-.5 2.5-2 4.9-4 6.5C6 11.1 5 13 5 15a7 7 0 0 0 7 7z"/>',
+    };
+
+    function makeIcon(w) {
+      const size = Math.max(12, Math.min(200, w.size ?? 24));
+      const host = el('div', 'free-icon');
+      host.style.width = size + 'px';
+      host.style.height = size + 'px';
+      const NS = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(NS, 'svg');
+      svg.setAttribute('viewBox', '0 0 24 24');
+      svg.setAttribute('width', size);
+      svg.setAttribute('height', size);
+      svg.setAttribute('fill', 'none');
+      svg.setAttribute('stroke-width', '2');
+      svg.setAttribute('stroke-linecap', 'round');
+      svg.setAttribute('stroke-linejoin', 'round');
+      // var() 只能走 CSS，不能进 presentation 属性
+      svg.style.stroke = 'var(--text-color)';
+      svg.innerHTML = ICON_PATHS[w.name] || ICON_PATHS.pulse;
+      host.appendChild(svg);
+      document.body.appendChild(host);
+      return { update() {} };
+    }
+
+    // --- image：URL 图片原子件（cover/contain/fill；没 URL 时画虚线占位） ---------
+
+    function makeImage(w) {
+      const host = el('div', 'free-image');
+      if (w.url) {
+        const img = document.createElement('img');
+        img.src = w.url;
+        img.alt = '';
+        img.draggable = false;
+        img.style.objectFit = ['cover', 'contain', 'fill'].includes(w.fit) ? w.fit : 'cover';
+        host.appendChild(img);
+      } else {
+        host.appendChild(el('div', 'img-empty', [text('IMG')]));
+      }
+      document.body.appendChild(host);
+      return { update() {} };
+    }
+
+    // --- divider：分隔线原子件（横线高=thickness、竖线宽=thickness，长度走几何） ---
+
+    function makeDivider(w) {
+      const host = el('div', 'free-divider');
+      const th = Math.max(1, Math.min(40, w.thickness ?? 2));
+      if (w.vertical) host.style.width = th + 'px';
+      else host.style.height = th + 'px';
+      document.body.appendChild(host);
+      return { update() {} };
+    }
+
+    // --- badge：药丸徽章原子件（{路径} 插值同 text；底色/描边走外观 bg） ----------
+    // 工厂先给默认药丸底，applyStyle 的 bg.* 有写就覆盖 —— 不写外观就是暗色药丸。
+
+    function makeBadge(w) {
+      const host = el('div', 'free-badge');
+      host.style.fontSize = (w.size ?? 15) + 'px';
+      document.body.appendChild(host);
+      const parts = compileParts(w.text);
+      return {
+        update() {
+          host.replaceChildren(...partsToNodes(parts));
+        }
+      };
+    }
 
     function build(layout) {
       applyCanvas(layout.canvas);
@@ -675,12 +1072,20 @@
         const make = WIDGET_TYPES[w.type];
         if (!make) { console.warn('未知部件类型：' + w.type); return; }
         instances.push(make(w));
+        // 各工厂都把根节点 append 到 body 末尾，拿出来打样式与定位。
+        // cards/chips/text 没写 w 时从 x 拉到右缘（通栏，和流式的观感衔接）；
+        // margin_top 已折算进 y，这里清零避免双重偏移。
+        // data-wi = 部件在数组里的下标，编辑器靠它直接改宿主样式做拖拽跟手。
+        const host = document.body.lastElementChild;
+        applyStyle(host, w);
+        // 统一 Node 公共字段：visible=false 整个不画；rotation 绕部件中心旋转。
+        // 每次预览推送都全量重建，不会残留上一份的变换。
+        if (w.visible === false) host.style.display = 'none';
+        if (Number.isFinite(w.rotation) && w.rotation) {
+          host.style.transformOrigin = 'center';
+          host.style.transform = `rotate(${w.rotation}deg)`;
+        }
         if (free) {
-          // 各工厂都把根节点 append 到 body 末尾，拿出来打上定位。
-          // cards/chips/text 没写 w 时从 x 拉到右缘（通栏，和流式的观感衔接）；
-          // margin_top 已折算进 y，这里清零避免双重偏移。
-          // data-wi = 部件在数组里的下标，编辑器靠它直接改宿主样式做拖拽跟手。
-          const host = document.body.lastElementChild;
           host.dataset.wi = String(i);
           host.style.left = (w.x || 0) + 'px';
           host.style.top = (w.y || 0) + 'px';
@@ -702,7 +1107,8 @@
     function reportRects() {
       const rects = [];
       for (const h of document.body.querySelectorAll('[data-wi]')) {
-        rects[+h.dataset.wi] = {
+        // 隐藏件（visible=false）量出来是 0×0，报 null 让编辑器直接不画手柄盒
+        rects[+h.dataset.wi] = h.style.display === 'none' ? null : {
           x: h.offsetLeft, y: h.offsetTop, w: h.offsetWidth, h: h.offsetHeight,
         };
       }
@@ -776,9 +1182,14 @@
       render();
     }
 
-    async function boot() {
-      const metrics = await getJSON('/metrics.json');
-      for (const m of metrics.metrics) if (m.out) byOut.set(m.out, m);
+  async function boot() {
+    // 主题清单随 meta 一起拿（单一来源在 hwobs/themes.py）；拿不到就只剩渲染器
+    // 内置的 Nord 默认，canvas.theme 指向其他主题时静默回退。
+    const [metrics] = await Promise.all([
+      getJSON('/metrics.json'),
+      getJSON('/api/widgets/meta').then(m => { THEME_TABLE = (m && m.themes) || {}; }).catch(() => {}),
+    ]);
+    for (const m of metrics.metrics) if (m.out) byOut.set(m.out, m);
       if (PREVIEW) {
         // 管理页可能在 metrics 加载完成前就推了第一版草稿，这里补建
         if (pendingPreview) build(pendingPreview);

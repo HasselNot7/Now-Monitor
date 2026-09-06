@@ -3,6 +3,7 @@
 import type {
   AidaPlan,
   AidaStatus,
+  CustomComponent,
   HW,
   LayoutCheck,
   LayoutPreset,
@@ -10,6 +11,8 @@ import type {
   OverlayConfig,
   Profile,
   UnknownSensor,
+  WidgetsMeta,
+  Widget,
 } from "./types";
 
 async function getJSON<T>(url: string): Promise<T> {
@@ -33,6 +36,7 @@ export const api = {
   hw: () => getJSON<HW>("/hw.json"),
   overlay: () => getJSON<OverlayConfig>("/overlay.json"),
   metrics: () => getJSON<{ metrics: Metric[] }>("/metrics.json"),
+  widgetsMeta: () => getJSON<WidgetsMeta>("/api/widgets/meta"),
   layoutCheck: () => getJSON<LayoutCheck>("/api/layout-check"),
   layoutCheckDraft: (cfg: unknown) =>
     sendJSON<LayoutCheck & { errors?: string[] }>("/api/layout-check", "POST", cfg),
@@ -53,6 +57,14 @@ export const api = {
       "/api/layout/presets", "POST", spec),
   removeLayoutPreset: async (id: string) => {
     const r = await fetch(`/api/layout/presets?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+    return r.json() as Promise<{ removed: boolean; error?: string }>;
+  },
+  components: () => getJSON<{ components: CustomComponent[] }>("/api/layout/components"),
+  addComponent: (spec: { name: string; widgets: Widget[] }) =>
+    sendJSON<{ saved: boolean; entry?: CustomComponent; errors?: string[] }>(
+      "/api/layout/components", "POST", spec),
+  removeComponent: async (id: string) => {
+    const r = await fetch(`/api/layout/components?id=${encodeURIComponent(id)}`, { method: "DELETE" });
     return r.json() as Promise<{ removed: boolean; error?: string }>;
   },
   profiles: () => getJSON<{ profiles: Profile[]; active: string | null }>("/api/profiles"),

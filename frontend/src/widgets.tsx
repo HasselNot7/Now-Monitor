@@ -1,8 +1,12 @@
-import { Button, Modal, TextField, Input, Label, toast } from "@heroui/react";
+import { Button } from "@heroui/button";
+import { Input } from "@heroui/input";
+import { Modal, ModalBody, ModalContent, ModalFooter, ModalHeader } from "@heroui/modal";
 import { useEffect, useRef, useState } from "react";
 import { Layers, Plus, X } from "lucide-react";
 import { api } from "./api";
+import { toast } from "./lib/toast";
 import type { AidaStatus, Profile } from "./types";
+import { Btn } from "./ui";
 
 /** 从 AIDA64 状态算出「哪里不对 + 怎么修」。文案接向导页的排障知识，分步列给用户。 */
 export function troubleshoot(st: AidaStatus | null): { title: string; steps: string[] }[] {
@@ -46,21 +50,18 @@ export function aidaIssue(st: AidaStatus | null): "ok" | "warn" | "bad" {
   return "ok";
 }
 
-/** 连接排障弹窗：状态点的 warning/danger 可点开，分步 list-disc 引导（NP 平台连通性同款）。 */
+/** 连接排障弹窗：状态点的 warning/danger 可点开，分步 list-decimal 引导（NP 平台连通性同款）。 */
 export function TroubleshootModal({ status, isOpen, onClose }: {
   status: AidaStatus | null; isOpen: boolean; onClose: () => void;
 }) {
   const problems = troubleshoot(status);
   return (
-    <Modal>
-      <Modal.Backdrop isOpen={isOpen} onOpenChange={open => { if (!open) onClose(); }}>
-        <Modal.Container size="md">
-          <Modal.Dialog className="sm:max-w-[560px]">
-            <Modal.CloseTrigger />
-            <Modal.Header>
-              <Modal.Heading>连接排障</Modal.Heading>
-            </Modal.Header>
-            <Modal.Body>
+    <Modal isOpen={isOpen} size="lg" onClose={onClose}>
+      <ModalContent>
+        {() => (
+          <>
+            <ModalHeader className="flex flex-col gap-1 text-xl">连接排障</ModalHeader>
+            <ModalBody>
               {problems.length === 0 ? (
                 <p className="text-sm leading-6 text-color-desc">一切正常 —— 没检测到连接问题。</p>
               ) : (
@@ -68,23 +69,23 @@ export function TroubleshootModal({ status, isOpen, onClose }: {
                   {problems.map((p, i) => (
                     <div key={i} className="flex flex-col gap-2">
                       <div className="flex items-center gap-2">
-                        <span className="size-2 rounded-full bg-warning shadow-[0_0_8px_var(--warning)]" />
+                        <span className="size-2 rounded-full bg-warning shadow-[0_0_8px_var(--heroui-warning)]" />
                         <b className="text-sm font-bold text-foreground">{p.title}</b>
                       </div>
-                      <ol className="ml-5 flex list-decimal flex-col gap-1.5 text-sm text-color-desc marker:text-muted">
+                      <ol className="ml-5 flex list-decimal flex-col gap-1.5 text-sm text-color-desc marker:text-default-500">
                         {p.steps.map((s, j) => <li key={j} className="leading-6">{s}</li>)}
                       </ol>
                     </div>
                   ))}
                 </div>
               )}
-            </Modal.Body>
-            <Modal.Footer>
-              <Button variant="secondary" className="bg-[#27272a]" onPress={onClose}>知道了</Button>
-            </Modal.Footer>
-          </Modal.Dialog>
-        </Modal.Container>
-      </Modal.Backdrop>
+            </ModalBody>
+            <ModalFooter>
+              <Btn variant="secondary" className="bg-[#27272a]" onPress={onClose}>知道了</Btn>
+            </ModalFooter>
+          </>
+        )}
+      </ModalContent>
     </Modal>
   );
 }
@@ -136,7 +137,7 @@ export function LivePreview({ url, canvasW, canvasH }: {
   if (!open) {
     return (
       <button type="button" onClick={() => setOpen(true)} title="打开实时预览"
-        className="fixed bottom-6 right-6 z-30 cursor-pointer rounded-full border border-white/10 bg-[#1a1a1d] px-4 py-2 text-sm font-medium text-muted shadow-lg transition-colors hover:border-accent/60 hover:text-foreground">
+        className="fixed bottom-6 right-6 z-30 cursor-pointer rounded-full border border-white/10 bg-[#1a1a1d] px-4 py-2 text-sm font-medium text-default-500 shadow-lg transition-colors hover:border-primary/60 hover:text-foreground">
         预览叠加层
       </button>
     );
@@ -146,12 +147,12 @@ export function LivePreview({ url, canvasW, canvasH }: {
       className="fixed z-30 w-[380px] overflow-hidden rounded-xl border border-white/10 bg-[#1a1a1d] shadow-2xl"
       onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}>
       <div className="flex h-9 cursor-move items-center justify-between border-b border-white/[0.06] px-3 select-none">
-        <span className="flex items-center gap-2 text-xs font-medium text-muted">
-          <span className="size-1.5 rounded-full bg-success shadow-[0_0_6px_var(--success)]" />
+        <span className="flex items-center gap-2 text-xs font-medium text-default-500">
+          <span className="size-1.5 rounded-full bg-success shadow-[0_0_6px_var(--heroui-success)]" />
           实时预览 · {canvasW}×{canvasH}
         </span>
         <button type="button" onClick={() => setOpen(false)} title="关闭预览"
-          className="grid size-5 place-items-center rounded text-muted transition-colors hover:bg-white/10 hover:text-foreground">
+          className="grid size-5 place-items-center rounded text-default-500 transition-colors hover:bg-white/10 hover:text-foreground">
           <X size={13} />
         </button>
       </div>
@@ -204,18 +205,18 @@ export function ProfileSwitcher({ onPublished }: { onPublished?: () => void }) {
 
   const del = async (n: string) => {
     const rep = await api.removeProfile(n);
-    if (rep.removed) { toast(`已删除档位：${n}`); load(); }
+    if (rep.removed) { toast.default(`已删除档位：${n}`); load(); }
     else toast.danger("删除失败", { description: rep.error, timeout: 6000 });
   };
 
   return (
     <div className="flex flex-col gap-2 px-3 pb-4">
       <div className="flex items-center justify-between">
-        <span className="flex items-center gap-1.5 text-xs font-bold text-accent">
+        <span className="flex items-center gap-1.5 text-xs font-bold text-primary">
           <Layers size={13} /> 版式档位
         </span>
         <button type="button" onClick={() => setSaveOpen(true)} title="把当前已发布版式存成一个新档位"
-          className="inline-flex cursor-pointer items-center gap-0.5 rounded px-1.5 py-0.5 text-xs text-muted transition-colors hover:bg-white/[0.06] hover:text-foreground">
+          className="inline-flex cursor-pointer items-center gap-0.5 rounded px-1.5 py-0.5 text-xs text-default-500 transition-colors hover:bg-white/[0.06] hover:text-foreground">
           <Plus size={12} /> 存为
         </button>
       </div>
@@ -227,13 +228,13 @@ export function ProfileSwitcher({ onPublished }: { onPublished?: () => void }) {
                 title={p.active ? "当前生效档位" : `切换到「${p.name}」并发布到 OBS`}
                 className={`cursor-pointer rounded-full border px-2.5 py-1 text-xs font-medium transition-all duration-150 ${
                   p.active
-                    ? "border-accent bg-accent/15 text-accent"
-                    : "border-white/10 text-muted hover:border-accent/50 hover:text-foreground"
+                    ? "border-primary bg-primary/15 text-primary"
+                    : "border-white/10 text-default-500 hover:border-primary/50 hover:text-foreground"
                 }`}>
                 {p.name}{p.modified ? " ·已改" : ""}
               </button>
               <button type="button" onClick={() => del(p.name)} title={`删除档位「${p.name}」`}
-                className="absolute -right-1 -top-1 hidden size-3.5 place-items-center rounded-full bg-[#3a3a40] text-[9px] text-muted hover:bg-danger hover:text-white group-hover:grid">
+                className="absolute -right-1 -top-1 hidden size-3.5 place-items-center rounded-full bg-[#3a3a40] text-[9px] text-default-500 hover:bg-danger hover:text-white group-hover:grid">
                 <X size={9} />
               </button>
             </span>
@@ -241,29 +242,26 @@ export function ProfileSwitcher({ onPublished }: { onPublished?: () => void }) {
         </div>
       )}
 
-      <Modal>
-        <Modal.Backdrop isOpen={saveOpen} onOpenChange={o => { if (!o) setSaveOpen(false); }}>
-          <Modal.Container size="sm">
-            <Modal.Dialog>
-              <Modal.CloseTrigger />
-              <Modal.Header><Modal.Heading>存为档位</Modal.Heading></Modal.Header>
-              <Modal.Body>
-                <p className="mb-3 text-sm leading-6 text-color-desc">
+      <Modal isOpen={saveOpen} size="sm" onOpenChange={o => { if (!o) setSaveOpen(false); }}>
+        <ModalContent>
+          {() => (
+            <>
+              <ModalHeader className="flex flex-col gap-1 text-xl">存为档位</ModalHeader>
+              <ModalBody>
+                <p className="text-sm leading-6 text-color-desc">
                   把当前已发布的版式快照成一个档位，之后可一键切回。
                 </p>
-                <TextField value={name} onChange={setName}
-                  onKeyDown={e => { if (e.key === "Enter" && !busy && name.trim()) save(); }}>
-                  <Label>档位名</Label>
-                  <Input placeholder="例如：全屏直播 / 角落小窗" />
-                </TextField>
-              </Modal.Body>
-              <Modal.Footer>
-                <Button variant="secondary" className="bg-[#27272a]" onPress={() => setSaveOpen(false)}>取消</Button>
-                <Button isDisabled={!name.trim() || busy} onPress={save}>保存</Button>
-              </Modal.Footer>
-            </Modal.Dialog>
-          </Modal.Container>
-        </Modal.Backdrop>
+                <Input label="档位名" placeholder="例如：全屏直播 / 角落小窗"
+                  value={name} onValueChange={setName} variant="bordered"
+                  onKeyDown={e => { if (e.key === "Enter" && !busy && name.trim()) save(); }} />
+              </ModalBody>
+              <ModalFooter>
+                <Btn variant="secondary" className="bg-[#27272a]" onPress={() => setSaveOpen(false)}>取消</Btn>
+                <Button color="primary" isDisabled={!name.trim() || busy} onPress={save}>保存</Button>
+              </ModalFooter>
+            </>
+          )}
+        </ModalContent>
       </Modal>
     </div>
   );

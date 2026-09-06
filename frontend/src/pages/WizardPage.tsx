@@ -1,9 +1,10 @@
-import { Chip } from "@heroui/react";
+import { Chip } from "@heroui/chip";
+import { Input } from "@heroui/input";
 import { Cable, LayoutTemplate, MonitorPlay, ArrowRight } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import type { Shared } from "../App";
-import { Btn, CARD_CLS, Hint, Page } from "../ui";
-import { CopyButton } from "../motion";
+import type { Shared } from "../shared";
+import { Btn, CARD_CLS, FieldLabel, Hint, Page } from "../ui";
+import CopyButton from "../components/CopyButton";
 
 type StepKind = "done" | "todo" | "bad" | "act";
 
@@ -25,10 +26,10 @@ function StepCard({ kind, num, title, Icon, children, actions }: {
   actions?: React.ReactNode;
 }) {
   const tone = {
-    done: "bg-accent/15 text-accent",
+    done: "bg-primary/15 text-primary",
     todo: "bg-warning/15 text-warning",
     bad: "bg-danger/15 text-danger",
-    act: "bg-[#27272a] text-muted",
+    act: "bg-[#27272a] text-default-500",
   }[kind];
   return (
     <div className={`${CARD_CLS} flex gap-4 p-4`}>
@@ -40,7 +41,7 @@ function StepCard({ kind, num, title, Icon, children, actions }: {
           <h3 className="text-base font-bold leading-6 text-foreground">
             <span className="mr-1.5 font-poppins">{num}</span>{title}
           </h3>
-          <Chip size="sm" variant="soft" color={KIND_CHIP[kind].color}>{KIND_CHIP[kind].text}</Chip>
+          <Chip size="sm" variant="flat" color={KIND_CHIP[kind].color}>{KIND_CHIP[kind].text}</Chip>
         </div>
         {children && <div className="mt-2 flex flex-col gap-2">{children}</div>}
         {actions && <div className="mt-3 flex flex-wrap gap-2">{actions}</div>}
@@ -104,20 +105,28 @@ export default function WizardPage({ shared }: { shared: Shared }) {
     </StepCard>
   );
 
-  // OBS 有没有加源没法替用户验证 —— 如实给"照着做"；但版式还是空的时候先拦一下
+  // OBS 有没有加源没法替用户验证 —— 如实给"照着做"；但版式还是空的时候先拦一下。
+  // URL 行沿用状态页的 NP IntegrationCard 写法：只读输入框 + 内嵌复制按钮，
+  // 别把按钮裸排在文字行里（和小号 code 芯片不协调）。
   const step3kind = laid ? "act" as const : "todo" as const;
   const step3 = (
     <StepCard kind={step3kind} num={3} title="在 OBS 里添加“浏览器”源" Icon={MonitorPlay}>
-      <Hint>
-        <span className="inline-flex flex-wrap items-center gap-1">
-          URL <code className="rounded-md bg-[#27272a] px-1.5 py-0.5 font-jetbrains text-xs">{location.origin}/</code>
-          <CopyButton text={`${location.origin}/`} label="复制浏览器源 URL" size={13} />
-        </span>
-        　宽 {check?.canvas_w ?? "—"} × 高 {check?.canvas_h ?? "—"}
-        {!laid && " —— 版式还是空的，先去排版"}
-        <br />
-        修改样式后请刷新
-      </Hint>
+      <div className="flex flex-col gap-2">
+        <FieldLabel>浏览器源 URL</FieldLabel>
+        <Input
+          className="font-jetbrains"
+          classNames={{ inputWrapper: "pl-4 pr-0" }}
+          isReadOnly
+          endContent={<CopyButton copyContent={`${location.origin}/`} label="复制浏览器源 URL" />}
+          type="text"
+          value={`${location.origin}/`}
+          variant="bordered"
+        />
+        <Hint>
+          宽 {check?.canvas_w ?? "—"} × 高 {check?.canvas_h ?? "—"}
+          {!laid && " —— 版式还是空的，先去排版"}；修改样式后请刷新浏览器源。
+        </Hint>
+      </div>
     </StepCard>
   );
 

@@ -1,37 +1,65 @@
-import { Accordion, Checkbox, cn, Input, Label, ListBox, Modal, Select, TextArea, TextField, toast } from "@heroui/react";
+import { Accordion, AccordionItem } from "@heroui/accordion";
+import { Checkbox } from "@heroui/checkbox";
+import { Input, Textarea } from "@heroui/input";
+import { Modal, ModalBody, ModalContent, ModalFooter, ModalHeader } from "@heroui/modal";
+import { Select, SelectItem } from "@heroui/select";
+import { cn } from "@heroui/theme";
+import { X } from "lucide-react";
 /** 版式编辑器的子组件：指标选择器、槽位编辑、卡片/chips/text 部件编辑器、模板库弹窗。
- * 控件一律用 HeroUI，样式学 Now Playing（淡蓝字段标签、flat 控件、卡片底）。
+ * 控件一律用 HeroUI（v2 —— 与 Now Playing 同一套），样式学 NP（淡蓝字段标签、flat 控件、卡片底）。
  * 草稿对象直接原地改，改完调 onChange() 触发上层重渲染 + 防抖校验。 */
 
 import { useEffect, useRef, useState } from "react";
 import type {
   CardItem, CardsWidget, ChipsWidget, GaugeWidget, GroupDef, HtmlWidget, LayoutPreset, Metric,
-  MetricRef, OverlayConfig, ProgressWidget, StatWidget, TextWidget, Widget,
+  MetricRef, OverlayConfig, ProgressWidget, PropField, SparkWidget, StatWidget, StyleField,
+  TextWidget, ValueWidget, Widget, WidgetsMeta,
 } from "../types";
-type TFProps = React.ComponentProps<typeof TextField>;
 import { AnimatedRow } from "../motion";
 import { api } from "../api";
-import { Btn, CARD_CLS, FieldLabel, Hint, TSwitch } from "../ui";
+import { toast } from "../lib/toast";
+import { Btn, CARD_CLS, FieldLabel, Hint, SubTitle, TSwitch } from "../ui";
 
-/** v3 的输入框拆成 TextField（状态）+ Input（外观）两层。这里薄封装回单节点写法：
- * 状态 props（value/defaultValue/onChange/type/placeholder/aria-label/onBlur）挂外壳，
- * variant 统一 secondary（我们全是嵌在卡片/面板里的矮富度输入）。
- * Input 加 px-4 py-3：v3 没有 size=lg，NP 的大输入框（size lg + px-4）用内边距抄出来。
- * 字体一律 Poppins + tabular-nums（NP 数字也不写等宽体，改值时不跳位靠 tnum）。 */
-export const TF = ({ className = "", placeholder, title, ...props }: TFProps & { placeholder?: string; title?: string }) => {
+/** NP 的输入框是单组件（v3 拆成 TextField+Input 两层）。这里薄封装保持旧调用形状：
+ * 状态 props（value/defaultValue/onChange(string)/type/placeholder/aria-label/onBlur）
+ * 原样透传，variant 用 bordered（嵌在卡片/面板里的矮富度输入，同 NP 的 URL 输入框）。 */
+type TFProps = {
+  className?: string;
+  placeholder?: string;
+  title?: string;
+  type?: string;
+  value?: string;
+  defaultValue?: string;
+  onChange?: (v: string) => void;
+  onBlur?: (e: React.FocusEvent<HTMLInputElement>) => void;
+  "aria-label"?: string;
+};
+
+export const TF = ({ className = "", placeholder, title, onChange, onBlur, ...props }: TFProps) => {
   const f = (
-    <TextField className={cn(className, "font-poppins tabular-nums")} variant="secondary" {...props}>
-      <Input className="px-4 py-3" placeholder={placeholder} />
-    </TextField>
+    <Input
+      className={cn("font-poppins tabular-nums", className)}
+      variant="bordered"
+      placeholder={placeholder}
+      {...(onChange ? { onValueChange: onChange } : {})}
+      {...(onBlur ? { onBlur } : {})}
+      {...props}
+    />
   );
   return title ? <span title={title} className="inline-flex">{f}</span> : f;
 };
 
-/** 多行版（自定义 HTML 编辑器用）。rows 是原生 textarea 属性，走 TextArea。 */
-export const TFArea = ({ className = "", rows, placeholder, ...props }: TFProps & { rows?: number; placeholder?: string }) => (
-  <TextField className={cn("font-poppins", className)} variant="secondary" {...props}>
-    <TextArea className="px-4 py-3" rows={rows} placeholder={placeholder} />
-  </TextField>
+/** 多行版（自定义 HTML 编辑器用）。rows 是原生 textarea 属性。 */
+export const TFArea = ({ className = "", rows, placeholder, onChange, ...props }:
+  TFProps & { rows?: number }) => (
+  <Textarea
+    className={cn("font-poppins", className)}
+    variant="bordered"
+    rows={rows}
+    placeholder={placeholder}
+    {...(onChange ? { onValueChange: onChange } : {})}
+    {...props}
+  />
 );
 
 const GROUP_TITLES: Record<string, string> = {
@@ -64,32 +92,35 @@ export function MetricSelect({ metrics, value, allowEmpty = true, compact, onCha
   return (
     <Select
       aria-label="选择指标"
-      placeholder="选择指标"
       className={cn(compact ? "w-full" : "w-[240px] flex-none", "font-jetbrains")}
-      value={selected ?? null}
-      onChange={k => onChange(!k || k === NONE ? "" : String(k))}
+      classNames={{
+        trigger: "min-h-12 h-auto px-4 cursor-pointer transition-background !duration-150",
+        innerWrapper: "py-1.5",
+        popoverContent: "rounded-2xl",
+      }}
+      items={options}
+      disallowEmptySelection={!allowEmpty}
+      selectedKeys={selected ? new Set([selected]) : new Set<string>()}
+      onSelectionChange={keys => {
+        if (!(keys instanceof Set) || keys.size === 0) return;
+        const k = [...keys][0];
+        onChange(!k || k === NONE ? "" : String(k));
+      }}
+      // 收起的框里只显示名字；路径小字只留在下拉列表里（textValue 仍含路径，输入可按路径过滤）
+      renderValue={items => <span className="truncate">{items[0]?.data?.primary ?? ""}</span>}
     >
-      <Select.Trigger className="min-h-12 w-full min-w-0 px-4">
-        <Select.Value className="min-w-0" />
-        <Select.Indicator />
-      </Select.Trigger>
-      <Select.Popover>
-        <ListBox>
-          {options.map(o => (
-            <ListBox.Item key={o.id} id={o.id}
-              textValue={[o.primary, o.secondary].filter(Boolean).join(" ")}
-              className="min-h-14 px-3 py-2.5 text-base">
-              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <span className="truncate">{o.primary}</span>
-                {o.secondary && (
-                  <span className="truncate text-xs font-jetbrains text-muted">{o.secondary}</span>
-                )}
-              </span>
-              <ListBox.ItemIndicator />
-            </ListBox.Item>
-          ))}
-        </ListBox>
-      </Select.Popover>
+      {(o) => (
+        <SelectItem key={o.id} textValue={`${o.primary} ${o.secondary ?? ""}`}
+          className="min-h-14 mb-1 last:mb-0"
+          classNames={{ base: "px-3 py-2.5" }}>
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <span className="truncate text-base">{o.primary}</span>
+            {o.secondary && (
+              <span className="truncate text-xs font-jetbrains text-default-400">{o.secondary}</span>
+            )}
+          </span>
+        </SelectItem>
+      )}
     </Select>
   );
 }
@@ -119,8 +150,8 @@ function SlotRow({ arr, i, total, unitAll, allowLabel, metrics, onChange, rebuil
   const item = arr[i];
   const del = (
     <Btn isIconOnly variant="ghost" className={compact
-      ? "h-8 w-8 min-w-0 shrink-0 rounded-lg text-muted hover:bg-danger/15 hover:text-danger"
-      : "h-7 w-7 min-w-0 rounded-full text-muted"}
+      ? "h-8 w-8 min-w-0 shrink-0 rounded-lg text-default-500 hover:bg-danger/15 hover:text-danger"
+      : "h-7 w-7 min-w-0 rounded-full text-default-500"}
       title="移除这一项" onPress={() => { arr.splice(i, 1); rebuild(); onChange(); }}>
       ✕
     </Btn>
@@ -217,7 +248,7 @@ function SlotRow({ arr, i, total, unitAll, allowLabel, metrics, onChange, rebuil
   if (item && "pair" in item) {
     const vals = item.pair!;
     const numField = (text: string, key: "divide" | "digits" | "digits2", val?: number) => (
-      <label className="flex items-center gap-1.5 text-xs text-muted">
+      <label className="flex items-center gap-1.5 text-xs text-default-500">
         {text}
         <TF type="number" aria-label={`${text}`}
           className="w-20 font-poppins" value={String(val ?? "")}
@@ -238,15 +269,15 @@ function SlotRow({ arr, i, total, unitAll, allowLabel, metrics, onChange, rebuil
         ? "flex flex-col gap-2.5 rounded-xl bg-[#1a1a1d] p-3"
         : "my-1 flex flex-wrap items-center gap-2 rounded-lg border border-white/[0.06] p-2"}>
         <div className="flex min-w-0 items-center gap-1.5">
-          <span className="flex-none font-poppins text-xs text-muted" title="两个指标相除">比值</span>
+          <span className="flex-none font-poppins text-xs text-default-500" title="两个指标相除">比值</span>
           {sel(0)}
-          <span className="flex-none text-muted">/</span>
+          <span className="flex-none text-default-500">/</span>
           {sel(1)}
           {del}
         </div>
         <div className={`flex flex-wrap items-center gap-x-3 gap-y-2 ${compact ? "" : "ml-auto"}`}>
           {numField("除以", "divide", item.divide)}
-          <label className="flex items-center gap-1.5 text-xs text-muted">
+          <label className="flex items-center gap-1.5 text-xs text-default-500">
             单位
             <TF aria-label="单位" className="w-20 font-poppins"
               value={item.unit ?? ""}
@@ -255,7 +286,7 @@ function SlotRow({ arr, i, total, unitAll, allowLabel, metrics, onChange, rebuil
           {numField("小数", "digits", item.digits)}
           {numField("分母小数", "digits2", item.digits2)}
           {allowLabel && (
-            <label className="flex items-center gap-1.5 text-xs text-muted">
+            <label className="flex items-center gap-1.5 text-xs text-default-500">
               前缀
               <TF aria-label="前缀" className="w-24 font-poppins"
                 defaultValue={item.label ?? ""}
@@ -270,7 +301,7 @@ function SlotRow({ arr, i, total, unitAll, allowLabel, metrics, onChange, rebuil
   if (item && ("diff" in item)) {
     return (
       <div className="flex items-center gap-2 rounded-xl bg-[#1a1a1d] px-3 py-2">
-        <span className="min-w-0 flex-1 truncate font-poppins text-sm text-muted">
+        <span className="min-w-0 flex-1 truncate font-poppins text-sm text-default-500">
           差值: {(item.diff || []).join(" − ")}
         </span>
         {del}
@@ -279,7 +310,7 @@ function SlotRow({ arr, i, total, unitAll, allowLabel, metrics, onChange, rebuil
   }
   return (
     <div className="flex items-center gap-2 rounded-xl bg-[#1a1a1d] px-3 py-2">
-      <span className="min-w-0 flex-1 truncate font-jetbrains text-xs text-muted">{JSON.stringify(item)}</span>
+      <span className="min-w-0 flex-1 truncate font-jetbrains text-xs text-default-500">{JSON.stringify(item)}</span>
       {del}
     </div>
   );
@@ -365,7 +396,7 @@ function CardEditor({ w, card, index, metrics, onChange, compact }: {
     <div className={`${CARD_CLS} rounded-2xl p-4`}>
       <div className="mb-4 flex items-center justify-between">
         <b className="text-[15px] font-bold text-foreground">卡 {index + 1}</b>
-        <Btn variant="ghost" className="h-7 min-w-0 px-2 text-xs text-muted hover:text-danger"
+        <Btn variant="ghost" className="h-7 min-w-0 px-2 text-xs text-default-500 hover:text-danger"
           onPress={() => { w.items.splice(index, 1); onChange(); }}>
           删卡
         </Btn>
@@ -440,53 +471,49 @@ export function ChipsEditor({ w, metrics, onChange }: { w: ChipsWidget; metrics:
         />
       </div>
       <Accordion
-        allowsMultipleExpanded variant="surface"
-        className="mt-3" hideSeparator
-        defaultExpandedKeys={[...byPrefix].filter(([, paths]) => paths.some(p => inChips.has(p))).map(([k]) => k)}
+        selectionMode="multiple"
+        variant="splitted"
+        className="mt-3 px-0 shadow-none"
+        defaultSelectedKeys={[...byPrefix].filter(([, paths]) => paths.some(p => inChips.has(p))).map(([k]) => k)}
       >
         {[...byPrefix].map(([prefix, paths]) => {
           const checkedCount = paths.filter(p => inChips.has(p)).length;
           return (
-            <Accordion.Item key={prefix} id={prefix}
-              className="mb-2 rounded-xl border border-white/[0.04] bg-[#1a1a1d] px-4 last:mb-0">
-              <Accordion.Heading>
-                <Accordion.Trigger className="flex items-center gap-2 py-2 text-sm font-medium">
-                  <span>{GROUP_TITLES[prefix] || prefix.toUpperCase()}
-                    <span className="ml-2 text-xs text-muted">{checkedCount} 项</span></span>
-                  <Accordion.Indicator className="ml-auto text-muted">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6" /></svg>
-                  </Accordion.Indicator>
-                </Accordion.Trigger>
-              </Accordion.Heading>
-              <Accordion.Panel>
-                <Accordion.Body className="pb-2">
-                  <div className="flex flex-col gap-0.5">
-                    {paths.map(p => {
-                      const m = metrics.find(x => x.out === p);
-                      return (
-                        <Checkbox
-                          key={p}
-                          className="rounded-lg px-2 py-1.5 hover:bg-white/[0.04]"
-                          isSelected={inChips.has(p)}
-                          onChange={checked => {
-                            w.items = (w.items || []).filter(x => x !== p);
-                            if (checked) w.items.push(p);
-                            onChange();
-                          }}
-                        >
-                          <Checkbox.Content>
-                            <Checkbox.Control><Checkbox.Indicator /></Checkbox.Control>
-                            <span className="text-sm">{m?.name ?? p}
-                              <span className="ml-1 font-jetbrains text-xs text-muted">{p}</span>
-                            </span>
-                          </Checkbox.Content>
-                        </Checkbox>
-                      );
-                    })}
-                  </div>
-                </Accordion.Body>
-              </Accordion.Panel>
-            </Accordion.Item>
+            <AccordionItem
+              key={prefix}
+              aria-label={GROUP_TITLES[prefix] || prefix}
+              className="mb-2 rounded-xl border border-white/[0.04] bg-[#1a1a1d] px-4 last:mb-0"
+              title={
+                <span className="text-sm font-medium">
+                  {GROUP_TITLES[prefix] || prefix.toUpperCase()}
+                  <span className="ml-2 text-xs text-default-500">{checkedCount} 项</span>
+                </span>
+              }
+            >
+              <div className="flex flex-col gap-1 pb-2">
+                {paths.map(p => {
+                  const m = metrics.find(x => x.out === p);
+                  return (
+                    <Checkbox
+                      key={p}
+                      className="w-full rounded-lg px-2 py-2.5 hover:bg-white/[0.05]"
+                      isSelected={inChips.has(p)}
+                      onValueChange={checked => {
+                        w.items = (w.items || []).filter(x => x !== p);
+                        if (checked) w.items.push(p);
+                        onChange();
+                      }}
+                    >
+                      {/* 表格式两列：名字靠左，路径等宽字体靠右对齐（避免长短路径拖得参差） */}
+                      <span className="flex w-full min-w-0 items-center justify-between gap-3">
+                        <span className="truncate text-sm">{m?.name ?? p}</span>
+                        <span className="shrink-0 font-jetbrains text-xs text-default-400">{p}</span>
+                      </span>
+                    </Checkbox>
+                  );
+                })}
+              </div>
+            </AccordionItem>
           );
         })}
       </Accordion>
@@ -523,14 +550,14 @@ export function TextEditor({ w, metrics, onChange, compact }: { w: TextWidget; m
           {QUICK.map(p => {
             const name = metrics.find(m => m.out === p)?.name || p;
             return (
-              <Btn key={p} size="sm" className="h-8 rounded-lg bg-[#1a1a1d] px-3 font-poppins text-sm text-muted hover:bg-[#222226] hover:text-foreground"
+              <Btn key={p} size="sm" className="h-8 rounded-lg bg-[#1a1a1d] px-3 font-poppins text-sm text-default-500 hover:bg-[#222226] hover:text-foreground"
                 onPress={() => { w.text = `${w.text || ""}{${p}}`; onChange(); }}>
                 {name}
               </Btn>
             );
           })}
           {["time", "date"].map(p => (
-            <Btn key={p} size="sm" className="h-8 rounded-lg bg-[#1a1a1d] px-3 font-poppins text-sm text-accent hover:bg-[#222226]"
+            <Btn key={p} size="sm" className="h-8 rounded-lg bg-[#1a1a1d] px-3 font-poppins text-sm text-primary hover:bg-[#222226]"
               title={p === "time" ? "本地时钟 HH:MM:SS，每秒跳动" : "本地日期 YYYY-MM-DD"}
               onPress={() => { w.text = `${w.text || ""}{${p}}`; onChange(); }}>
               {p === "time" ? "时钟" : "日期"}
@@ -628,6 +655,224 @@ export function GaugeEditor({ w, metrics, onChange, compact }: { w: GaugeWidget;
   );
 }
 
+/** ColorInput：原生取色器 + 清除按钮（清空 = 回到默认/继承主题）。零新依赖。 */
+function ColorInput({ value, onChange }: { value: string; onChange: (hex: string) => void }) {
+  return (
+    <span className="flex items-center gap-1">
+      <input type="color" value={value || "#888888"} onChange={e => onChange(e.target.value)}
+        className="size-6 cursor-pointer rounded-md border border-white/10 bg-transparent p-0.5"
+        title="选颜色" />
+      {value && (
+        <button type="button" title="恢复默认（清空）" onClick={() => onChange("")}
+          className="grid size-5 place-items-center rounded text-default-500 transition-colors hover:bg-white/10 hover:text-foreground">
+          <X size={11} />
+        </button>
+      )}
+    </span>
+  );
+}
+
+/** 外观面板的整数字段：本地文本态驱动显示 —— 输入过程不钳制不回写（打 17 不会
+ * 被中途的最小值顶成 8），失焦才把钳制后的值落进 style；清空 = 删键回默认。
+ * f 只要求 min/max/default/label 这几个字段，StyleField 与 PropField 都能满足。 */
+function IntField({ v, f, onSet }: {
+  v: unknown; f: { label: string; min?: number; max?: number; default?: number | string | boolean };
+  onSet: (n: number | undefined) => void;
+}) {
+  const [text, setText] = useState(v === undefined ? "" : String(v));
+  const editingRef = useRef(false);
+  useEffect(() => {
+    if (!editingRef.current) setText(v === undefined ? "" : String(v));
+  }, [v]);
+  const clamp = (t: string): number | undefined => {
+    if (t === "") return undefined;
+    return Math.max(f.min ?? 0, Math.min(f.max ?? 999, Math.round(+t) || 0));
+  };
+  return (
+    <TF type="number" className="w-16" aria-label={f.label}
+      value={text} placeholder={String(f.default ?? "")}
+      onChange={t => {
+        editingRef.current = true;
+        setText(t);
+        onSet(clamp(t));   // 钳制值先进草稿（Ctrl+S 也拿到合理值），显示仍是本地文本
+      }}
+      onBlur={() => {
+        editingRef.current = false;
+        const num = clamp(text);
+        onSet(num);
+        setText(num === undefined ? "" : String(num));
+      }} />
+  );
+}
+
+/** 外观面板：按后端 style_schema 自动生成控件（颜色 / 滑杆 / 整数 / 开关）。
+ * schema 单一来源在 hwobs/widgets.py —— 后端校验和这里用的是同一份，永不漂移。
+ * style 就地改在部件对象上；清空一个键 = 删掉它（回退主题默认）。 */
+export function StyleEditor({ w, schema, onChange }: {
+  w: Widget;
+  schema: StyleField[];
+  onChange: () => void;
+}) {
+  const get = (key: string): unknown => {
+    let node: unknown = w.style;
+    for (const p of key.split(".")) {
+      if (node && typeof node === "object" && p in (node as Record<string, unknown>)) {
+        node = (node as Record<string, unknown>)[p];
+      } else return undefined;
+    }
+    return node;
+  };
+  const set = (key: string, v: unknown) => {
+    if (!w.style || typeof w.style !== "object") w.style = {};
+    let node = w.style as Record<string, unknown>;
+    const parts = key.split(".");
+    for (let i = 0; i < parts.length - 1; i++) {
+      const p = parts[i];
+      if (!node[p] || typeof node[p] !== "object") node[p] = {};
+      node = node[p] as Record<string, unknown>;
+    }
+    const last = parts[parts.length - 1];
+    if (v === undefined || v === "") delete node[last];
+    else node[last] = v;
+    onChange();
+  };
+
+  const bgOn = !!get("bg.color");
+  return (
+    <div className="flex flex-col gap-2">
+      <SubTitle>外观</SubTitle>
+      {schema.map(f => {
+        const v = get(f.key);
+        // 底色组：没选底色时其余 bg 键没有意义，灰掉
+        const dimmed = f.key.startsWith("bg.") && f.key !== "bg.color" && !bgOn;
+        return (
+          <div key={f.key}
+            className={`flex items-center justify-between gap-3 ${dimmed ? "pointer-events-none opacity-40" : ""}`}>
+            <span className="min-w-0 flex-1 truncate text-xs text-color-desc">{f.label}</span>
+            {f.type === "color" && (
+              <ColorInput value={typeof v === "string" ? v : ""} onChange={c => set(f.key, c)} />
+            )}
+            {f.type === "range" && (
+              <input type="range" min={f.min} max={f.max} step={f.step}
+                value={typeof v === "number" ? v
+                  : typeof f.default === "number" ? f.default : (f.max ?? 1)}
+                onChange={e => set(f.key, +e.target.value)}
+                className="w-28 cursor-pointer accent-[#3884ff]" />
+            )}
+            {f.type === "int" && (
+              <IntField v={v} f={f} onSet={n => set(f.key, n)} />
+            )}
+            {f.type === "bool" && (
+              <TSwitch size="sm" isSelected={v === undefined ? !!f.default : !!v}
+                onChange={b => set(f.key, b)} />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** 数据属性面板：按后端 props_schema 自动生成（text/int/bool/select）。
+ * 与 StyleEditor 对偶 —— 那个管「外观」，这个管「内容/行为」；就地改部件字段，
+ * 清空 = 删键回默认。schema 单一来源在 hwobs/widgets.py，与后端校验共用一份。 */
+export function PropsEditor({ w, schema, onChange }: {
+  w: Widget; schema: PropField[]; onChange: () => void;
+}) {
+  const get = (key: string): unknown => (w as unknown as Record<string, unknown>)[key];
+  const set = (key: string, v: unknown) => {
+    const node = w as unknown as Record<string, unknown>;
+    if (v === undefined || v === "") delete node[key];
+    else node[key] = v;
+    onChange();
+  };
+  return (
+    <div className="flex flex-col gap-2">
+      <SubTitle>属性</SubTitle>
+      {schema.map(f => {
+        const v = get(f.key);
+        return (
+          <div key={f.key} className="flex items-center justify-between gap-3">
+            <span className="min-w-0 flex-1 truncate text-xs text-color-desc">{f.label}</span>
+            {f.type === "text" && (
+              <TF className="w-44" value={typeof v === "string" ? v : ""}
+                placeholder={typeof f.default === "string" ? f.default : ""}
+                onChange={t => set(f.key, t)} />
+            )}
+            {f.type === "int" && (
+              <IntField v={v} f={f} onSet={n => set(f.key, n)} />
+            )}
+            {f.type === "bool" && (
+              <TSwitch size="sm" isSelected={v === undefined ? !!f.default : !!v}
+                onChange={b => set(f.key, b)} />
+            )}
+            {f.type === "select" && (
+              <select value={typeof v === "string" ? v : String(f.default ?? "")}
+                onChange={e => set(f.key, e.target.value)}
+                className="h-8 cursor-pointer rounded-lg border border-white/10 bg-[#1a1a1d] px-2 text-sm text-foreground outline-none">
+                {(f.options ?? []).map(o => <option key={o} value={o}>{o}</option>)}
+              </select>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+export function SparkEditor({ w, metrics, onChange }: {
+  w: SparkWidget; metrics: Metric[]; onChange: () => void;
+}) {
+  const num = (label: string, key: "w" | "h" | "samples", val: number | undefined, def: number) => (
+    <div className="flex min-w-0 flex-col gap-1.5">
+      <FieldLabel>{label}</FieldLabel>
+      <TF type="number" className="w-full" value={String(val ?? def)}
+        onChange={v => { (w as unknown as Record<string, number | undefined>)[key] = +v || def; onChange(); }} />
+    </div>
+  );
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <FieldLabel>指标</FieldLabel>
+        <MetricSelect metrics={metrics} value={w.metric} allowEmpty={false} compact
+          onChange={v => { if (v) { w.metric = v; onChange(); } }} />
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        {num("宽", "w", w.w, 120)}
+        {num("高", "h", w.h, 32)}
+        {num("采样秒", "samples", w.samples, 30)}
+      </div>
+    </div>
+  );
+}
+
+/** 数值组编辑器：复用 SlotEditor 的组条目机制（影子卡把 w.metrics 挂进 value 槽，
+ * 增删改都原地落在部件上）。外加 chips 观感的「每项带名字」开关与字号。 */
+export function ValueEditor({ w, metrics, onChange, compact }: {
+  w: ValueWidget; metrics: Metric[]; onChange: () => void; compact?: boolean;
+}) {
+  if (!w.metrics || typeof w.metrics !== "object" || !Array.isArray(w.metrics.metrics)) {
+    w.metrics = { metrics: [] };
+  }
+  const card = { value: w.metrics } as CardItem;
+  return (
+    <div className="flex flex-col gap-4">
+      <SlotEditor card={card} defKey="value" title="数值（可多项）" allowLabel
+        metrics={metrics} onChange={onChange} compact={compact} />
+      <div className="flex items-center justify-between gap-4">
+        <span className="text-[15px] font-medium text-foreground">每项带名字</span>
+        <TSwitch size="lg" aria-label="每项带名字" isSelected={!!w.show_name}
+          onChange={b => { if (b) w.show_name = true; else delete w.show_name; onChange(); }} />
+      </div>
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <FieldLabel>字号</FieldLabel>
+        <TF type="number" className="w-full" defaultValue={String(w.size ?? 19)}
+          onChange={v => { w.size = +v || 19; onChange(); }} />
+      </div>
+    </div>
+  );
+}
+
 /** HtmlEditor 的示例片段：一键插入可跑的动态组件范本 */
 const HTML_SNIPPETS: { name: string; title: string; html: string; w: number; h: number }[] = [
   {
@@ -710,10 +955,60 @@ export function HtmlEditor({ w, onChange }: { w: HtmlWidget; onChange: () => voi
 // --- 排版页共用块 ---------------------------------------------------------------
 
 /** 画布尺寸输入：原地改 draft.canvas，调用方负责重渲染。
- * NP 行式布局：小标签在上、通栏圆角输入框在下；开关行标签左、控件右。 */
-export function CanvasFields({ draft, onChange }: { draft: OverlayConfig; onChange: () => void }) {
+ * NP 行式布局：小标签在上、通栏圆角输入框在下；开关行标签左、控件右。
+ * 配色主题：内置主题来自 /api/widgets/meta（单一来源 hwobs/themes.py），
+ * 「自定义色板」就地写一个 {键: 颜色} 对象 —— 没写的键回退渲染器默认。 */
+const THEME_KEY_LABELS: Record<string, string> = {
+  bg: "背景", text: "文字", label: "标签 / 名字", chip: "小指标名字", dim: "次要文字",
+  subtext: "弱化色", bar_bg: "条轨道", bar_fill: "条填充", high: "告警色",
+  prompt_user: "命令行用户名", prompt_symbol: "命令行符号",
+};
+
+export function CanvasFields({ draft, onChange, meta }: {
+  draft: OverlayConfig;
+  onChange: () => void;
+  meta: WidgetsMeta | null;
+}) {
+  const theme = draft.canvas.theme;
+  const isCustom = !!theme && typeof theme === "object";
+  const name = typeof theme === "string" ? theme : (isCustom ? "__custom__" : "nord-console");
+  const palette: Record<string, string> = (isCustom ? theme : {}) as Record<string, string>;
+  const setTheme = (t: string | Record<string, string>) => { draft.canvas.theme = t; onChange(); };
+  const setPal = (k: string, v: string) => {
+    const next: Record<string, string> = { ...palette };
+    if (v) next[k] = v;
+    else delete next[k];
+    setTheme(next);
+  };
+  const themeItems: { id: string; label: string }[] = [
+    ...Object.entries(meta?.themes ?? {}).map(([id, t]) => ({ id, label: t.label })),
+    { id: "__custom__", label: "自定义色板" },
+  ];
   return (
     <div className="mt-2 flex flex-col gap-5">
+      <div className="flex flex-col gap-2">
+        <FieldLabel>配色主题</FieldLabel>
+        <Select aria-label="配色主题" className="w-full"
+          items={themeItems}
+          selectedKeys={new Set([name])}
+          onSelectionChange={keys => {
+            if (!(keys instanceof Set) || keys.size === 0) return;
+            const k = String([...keys][0]);
+            setTheme(k === "__custom__" ? palette : k);
+          }}>
+          {(item) => <SelectItem key={item.id} textValue={item.label}>{item.label}</SelectItem>}
+        </Select>
+      </div>
+      {name === "__custom__" && (
+        <div className="flex flex-col gap-1.5">
+          {Object.keys(THEME_KEY_LABELS).map(k => (
+            <div key={k} className="flex items-center justify-between gap-3">
+              <span className="text-xs text-color-desc">{THEME_KEY_LABELS[k]}</span>
+              <ColorInput value={palette[k] ?? ""} onChange={v => setPal(k, v)} />
+            </div>
+          ))}
+        </div>
+      )}
       <div className="flex flex-col gap-2">
         <FieldLabel>叠加层宽</FieldLabel>
         <TF
@@ -840,7 +1135,7 @@ function PresetThumb({ cfg }: { cfg: OverlayConfig }) {
     <div className="relative w-full overflow-hidden border border-white/10 bg-[#0e0f12]"
       style={{ aspectRatio: `${c.w} / ${c.h}` }}>
       {!free && cfg.prompt && (
-        <div className="absolute left-0 top-0 h-[6%] w-full bg-accent/25"
+        <div className="absolute left-0 top-0 h-[6%] w-full bg-primary/25"
           style={{ marginTop: pct(pad[0], c.h) }} />
       )}
       {cfg.widgets.map((w, i) => {
@@ -854,7 +1149,7 @@ function PresetThumb({ cfg }: { cfg: OverlayConfig }) {
             }
           : { left: pct(pad[1], c.w), top: pct(cursor, c.h), width: pct(c.w - pad[1] * 2, c.w), height: pct(h, c.h) };
         if (!free) cursor += h + 8;
-        return <div key={i} className="absolute bg-accent/45" style={style} />;
+        return <div key={i} className="absolute bg-primary/45" style={style} />;
       })}
     </div>
   );
@@ -939,7 +1234,7 @@ export function TemplatePicker({ isOpen, onOpenChange, onPick, current }: {
     const rep = await api.removeLayoutPreset(p.id);
     if (rep.removed) {
       setList(l => (l || []).filter(x => x.id !== p.id));
-      toast(`已删除模板：${p.name}`);
+      toast.default(`已删除模板：${p.name}`);
     } else {
       toast.danger("删除失败", { description: rep.error, timeout: 6000 });
     }
@@ -948,24 +1243,24 @@ export function TemplatePicker({ isOpen, onOpenChange, onPick, current }: {
   const card = (p: LayoutPreset) => (
     <div key={p.id} className="relative">
       <button type="button"
-        className="flex w-full flex-col gap-2 border border-white/10 bg-[#1a1a1d] p-3 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-accent/70"
+        className="flex w-full flex-col gap-2 border border-white/10 bg-[#1a1a1d] p-3 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/70"
         onClick={() => { onPick(p); onOpenChange(false); }}>
         <PresetThumb cfg={p.config} />
         <span className="flex items-baseline gap-2">
           <span className="text-sm font-bold text-foreground">{p.name}</span>
           {p.source === "user" && (
-            <span className="rounded bg-accent/20 px-1.5 py-0.5 text-[10px] font-bold text-accent">我的</span>
+            <span className="rounded bg-primary/20 px-1.5 py-0.5 text-[10px] font-bold text-primary">我的</span>
           )}
-          <span className="font-poppins text-[11px] text-muted">
+          <span className="font-poppins text-[11px] text-default-500">
             {p.config.canvas.w}×{p.config.canvas.h}
             {p.config.canvas.mode === "free" ? " · 自由" : " · 流式"}
           </span>
         </span>
-        <span className="text-xs leading-5 text-muted">{p.desc}</span>
+        <span className="text-xs leading-5 text-default-500">{p.desc}</span>
       </button>
       {p.source === "user" && (
         <button type="button" title="删除这个模板" onClick={() => remove(p)}
-          className="absolute right-2 top-2 z-10 grid size-6 place-items-center rounded border border-white/10 bg-black/60 text-xs text-muted transition-colors hover:border-danger hover:bg-danger hover:text-white">
+          className="absolute right-2 top-2 z-10 grid size-6 place-items-center rounded border border-white/10 bg-black/60 text-xs text-default-500 transition-colors hover:border-danger hover:bg-danger hover:text-white">
           ✕
         </button>
       )}
@@ -976,15 +1271,12 @@ export function TemplatePicker({ isOpen, onOpenChange, onPick, current }: {
   const builtin = (list || []).filter(p => p.source !== "user");
   const grid = "grid grid-cols-2 gap-3";
   return (
-    <Modal>
-      <Modal.Backdrop isOpen={isOpen} onOpenChange={onOpenChange}>
-        <Modal.Container size="lg">
-          <Modal.Dialog className="sm:max-w-[860px]">
-            <Modal.CloseTrigger />
-            <Modal.Header>
-              <Modal.Heading>模板库</Modal.Heading>
-            </Modal.Header>
-            <Modal.Body>
+    <Modal isOpen={isOpen} size="lg" onOpenChange={onOpenChange}>
+      <ModalContent>
+        {() => (
+          <>
+            <ModalHeader className="flex flex-col gap-1 text-xl">模板库</ModalHeader>
+            <ModalBody>
               <div className="flex flex-col gap-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <Btn size="sm" variant="secondary" className="bg-[#27272a]" isDisabled={busy}
@@ -1007,16 +1299,14 @@ export function TemplatePicker({ isOpen, onOpenChange, onPick, current }: {
                 </div>
                 {form && (
                   <div className="flex flex-wrap items-end gap-2 rounded-lg border border-white/10 bg-[#1a1a1d] p-3">
-                    <TextField className="w-52" value={name} onChange={setName}
-                      onKeyDown={e => { if (e.key === "Enter" && !busy) save(); }}>
-                      <Label>模板名</Label>
-                      <Input placeholder="例如：我的直播底栏" />
-                    </TextField>
-                    <TextField className="min-w-52 flex-1" value={desc} onChange={setDesc}
-                      onKeyDown={e => { if (e.key === "Enter" && !busy) save(); }}>
-                      <Label>一句话简介（可选）</Label>
-                      <Input />
-                    </TextField>
+                    <Input className="w-52" label="模板名" placeholder="例如：我的直播底栏"
+                      labelPlacement="outside" variant="bordered"
+                      value={name} onValueChange={setName}
+                      onKeyDown={e => { if (e.key === "Enter" && !busy) save(); }} />
+                    <Input className="min-w-52 flex-1" label="一句话简介（可选）"
+                      labelPlacement="outside" variant="bordered"
+                      value={desc} onValueChange={setDesc}
+                      onKeyDown={e => { if (e.key === "Enter" && !busy) save(); }} />
                     <Btn size="sm" isDisabled={busy} onPress={save}>保存</Btn>
                   </div>
                 )}
@@ -1037,10 +1327,10 @@ export function TemplatePicker({ isOpen, onOpenChange, onPick, current }: {
                   )}
                 </div>
               </div>
-            </Modal.Body>
-          </Modal.Dialog>
-        </Modal.Container>
-      </Modal.Backdrop>
+            </ModalBody>
+          </>
+        )}
+      </ModalContent>
     </Modal>
   );
 }

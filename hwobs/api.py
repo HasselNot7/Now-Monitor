@@ -19,7 +19,7 @@ from fastapi import Body, FastAPI, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import config, overlay, paths, presets, profiles, registry
+from . import components, config, overlay, paths, presets, profiles, registry, themes, widgets
 from .aida import controller
 from .sources import aida64, winapi
 
@@ -64,6 +64,28 @@ def create_app() -> FastAPI:
     @app.get("/metrics.json")
     def metrics_json():
         return registry.load()
+
+    @app.get("/api/widgets/meta")
+    def widgets_meta():
+        """部件注册表元数据：编辑器据此渲染组件菜单、默认值和「外观」控件，
+        渲染器拿 themes 解析 canvas.theme —— 三端单一来源，不再各抄一份。"""
+        order = [t for t in widgets.MENU_ORDER if t in widgets.WIDGETS]
+        order += [t for t in widgets.WIDGETS if t not in order]
+        return {
+            "order": order,
+            "widgets": {
+                k: {
+                    "label": v["label"],
+                    "icon": v["icon"],
+                    "summary": v["summary"],
+                    "defaults": v["defaults"],
+                    "style_schema": v["style_schema"],
+                    "props_schema": v.get("props_schema") or [],
+                }
+                for k, v in widgets.WIDGETS.items()
+            },
+            "themes": themes.THEMES,
+        }
 
     @app.get("/sensors")
     def sensors_dump():
@@ -162,6 +184,35 @@ def create_app() -> FastAPI:
         if not removed:
             return JSONResponse({"removed": False, "error": "没有这个用户模板（内置模板不可删除）"},
                                 status_code=404)
+        return {"removed": True, "id": id}
+
+    # ---------- 自定义组件（组合存为积木） ----------
+
+    @app.get("/api/layout/components")
+    def layout_components():
+        return {"components": components.list_all()}
+
+    @app.post("/api/layout/components")
+    async def layout_component_add(request: Request):
+        spec, err = await _json_body(request)
+        if err:
+            return err
+        try:
+            entry, problem = components.add(spec or {})
+        except Exception as e:      # noqa: BLE001
+            return JSONResponse({"saved": False, "errors": [f"服务端处理失败：{e}"]}, status_code=500)
+        if problem:
+            return JSONResponse({"saved": False, "errors": [problem]}, status_code=400)
+        return {"saved": True, "entry": entry}
+
+    @app.delete("/api/layout/components")
+    def layout_component_delete(id: str = Query(...)):
+        try:
+            removed = components.remove(id)
+        except Exception as e:      # noqa: BLE001
+            return JSONResponse({"removed": False, "error": f"服务端处理失败：{e}"}, status_code=500)
+        if not removed:
+            return JSONResponse({"removed": False, "error": "没有这个自定义组件"}, status_code=404)
         return {"removed": True, "id": id}
 
     # ---------- 多版式档位 ----------
