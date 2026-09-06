@@ -2584,6 +2584,7 @@ export default function EditorPage({ shared }: { shared: Shared }) {
                   {w.type === "cards" && <CardsEditor w={w as CardsWidget} metrics={metrics} onChange={onChange} compact />}
                   {w.type === "chips" && <ChipsEditor w={w as ChipsWidget} metrics={metrics} onChange={onChange} />}
                   {w.type === "text" && <TextEditor w={w as TextWidget} metrics={metrics} onChange={onChange} compact />}
+                  {w.type === "value" && <ValueEditor w={w as ValueWidget} metrics={metrics} onChange={onChange} compact />}
                 </div>
                 {/* 属性：按后端 props_schema 自动生成（icon/image/divider/badge 这类
                     简单件的内容字段）；复杂件继续走上面的手写编辑器 */}
