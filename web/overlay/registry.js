@@ -17,11 +17,13 @@ import { makeIcon } from './widgets/icon.js';
 import { makeImage } from './widgets/image.js';
 import { makeDivider } from './widgets/divider.js';
 import { makeBadge } from './widgets/badge.js';
+import { makeLight } from './widgets/light.js';
+import { makeStackbar } from './widgets/stackbar.js';
 
 export const WIDGET_TYPES = {
   cards: makeCards, chips: makeChips, text: makeText,
   stat: makeStat, progress: makeProgress, html: makeHtml,
   gauge: makeGauge, spark: makeSpark, panel: makePanel, value: makeValue,
   icon: makeIcon, image: makeImage, divider: makeDivider, badge: makeBadge,
-  bars: makeBars,
+  bars: makeBars, light: makeLight, stackbar: makeStackbar,
 };

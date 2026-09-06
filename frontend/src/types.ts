@@ -1,6 +1,6 @@
 /** 与 FastAPI 端点一一对应的类型定义。字段以 hwobs 各模块的返回为准。 */
 
-export type Widget = (CardsWidget | ChipsWidget | TextWidget | StatWidget | ProgressWidget | HtmlWidget | GaugeWidget | SparkWidget | PanelWidget | ValueWidget | IconWidget | ImageWidget | DividerWidget | BadgeWidget | BarsWidget) & StyledWidget & GroupedWidget & NodeBase;
+export type Widget = (CardsWidget | ChipsWidget | TextWidget | StatWidget | ProgressWidget | HtmlWidget | GaugeWidget | SparkWidget | PanelWidget | ValueWidget | IconWidget | ImageWidget | DividerWidget | BadgeWidget | BarsWidget | LightWidget | StackbarWidget) & StyledWidget & GroupedWidget & NodeBase;
 
 /** 统一 Node 模型的公共字段：画布上每个部件都有的变换与状态。
  * 全部可选 —— 旧版式没有这些字段，零迁移。渲染器消费 rotation/visible；
@@ -59,6 +59,21 @@ export interface BadgeWidget extends FreePos {
   type: "badge";
   text: string;
   size?: number;
+}
+
+/** 状态灯（N3/D4-A）：单指标三态圆点，颜色全走主题变量（fill/high/tmiss 灰） */
+export interface LightWidget extends FreePos {
+  type: "light";
+  metric: string;
+  label?: string;
+  size?: number;
+}
+
+/** 堆叠条（N3/D1-A）：metrics 组按值占比横排分段；长吃几何 w、粗吃 height 属性（同 progress 横条） */
+export interface StackbarWidget extends FreePos {
+  type: "stackbar";
+  metrics: GroupDef;
+  height?: number;
 }
 
 /** 所有组件都能带的外观覆盖（hwobs/widgets.py 的 style_schema 是它的契约），
@@ -184,6 +199,8 @@ export interface ProgressWidget extends FreePos {
   metric: string;
   w?: number;
   height?: number;
+  /** N2（D3-A）：竖向进度条 —— 长吃几何 h、粗吃几何 w */
+  orientation?: "h" | "v";
 }
 
 export interface HtmlWidget extends FreePos {
@@ -197,6 +214,8 @@ export interface GaugeWidget extends FreePos {
   label?: string | true;
   size?: number;
   ring?: number;
+  /** N2（D6）：half = 上半环 180°，指针惯例朝上 */
+  arc?: "full" | "half";
 }
 
 
@@ -384,10 +403,19 @@ export interface WidgetMeta {
   defaults: Record<string, unknown>;
   style_schema: StyleField[];
   props_schema?: PropField[];
+  /** 「添加部件」菜单分节归属（N1）：SSOT 在 widgets.py 的 category */
+  category: string;
+}
+
+/** 菜单小节（N1）：顺序与节名 = 后端 CATEGORIES 的 SSOT */
+export interface MetaCategory {
+  id: string;
+  label: string;
 }
 
 export interface WidgetsMeta {
   order: string[];
+  categories?: MetaCategory[];
   widgets: Record<string, WidgetMeta>;
   themes: Record<string, { label: string; vars: Record<string, string> }>;
 }

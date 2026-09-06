@@ -11,9 +11,9 @@ import { X } from "lucide-react";
 
 import { useEffect, useRef, useState } from "react";
 import type {
-  CardItem, CardsWidget, ChipsWidget, GaugeWidget, GroupDef, HtmlWidget, LayoutPreset, Metric,
-  MetricRef, OverlayConfig, ProgressWidget, PropField, SparkWidget, StatWidget, StyleField,
-  TextWidget, ValueWidget, Widget, WidgetsMeta,
+  CardItem, CardsWidget, ChipsWidget, GaugeWidget, GroupDef, HtmlWidget, LayoutPreset, LightWidget,
+  Metric, MetricRef, OverlayConfig, ProgressWidget, PropField, SparkWidget, StackbarWidget,
+  StatWidget, StyleField, TextWidget, ValueWidget, Widget, WidgetsMeta,
 } from "../types";
 import { AnimatedRow } from "../motion";
 import { api } from "../api";
@@ -922,6 +922,58 @@ HWOB.onTick(draw);
   },
 ];
 
+/** 状态灯编辑器（N3）：镜像 StatEditor —— 指标 + 可空名字 + 灯径。
+ * 三态色走壳 CSS 主题变量，没有可调的颜色字段。 */
+export function LightEditor({ w, metrics, onChange, compact }: {
+  w: LightWidget; metrics: Metric[]; onChange: () => void; compact?: boolean;
+}) {
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <FieldLabel>指标</FieldLabel>
+        <MetricSelect metrics={metrics} value={w.metric} allowEmpty={false} compact
+          onChange={v => { if (v) { w.metric = v; onChange(); } }} />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <FieldLabel>名字（可空）</FieldLabel>
+          <TF className="w-full font-poppins" placeholder="如 CPU"
+            defaultValue={w.label ?? ""}
+            onChange={v => { w.label = v || undefined; onChange(); }} />
+        </div>
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <FieldLabel>灯径 px</FieldLabel>
+          <TF type="number" className="w-full font-poppins"
+            defaultValue={String(w.size ?? 12)}
+            onChange={v => { w.size = +v || 12; onChange(); }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 堆叠条编辑器（N3）：复用 SlotEditor 的组条目机制（影子卡把 w.metrics 挂进 sub 槽，
+ * 增删改都原地落在部件上）。段颜色不用挑 —— 派生自主题 --bar-fill 色相 + 黄金角（D1-A）。 */
+export function StackbarEditor({ w, metrics, onChange }: {
+  w: StackbarWidget; metrics: Metric[]; onChange: () => void;
+}) {
+  if (!w.metrics || typeof w.metrics !== "object" || !Array.isArray(w.metrics.metrics)) {
+    w.metrics = { metrics: [] };
+  }
+  const card = { sub: w.metrics } as unknown as CardItem;
+  return (
+    <div className="flex flex-col gap-4">
+      <SlotEditor card={card} defKey="sub" title="堆叠段（按值占比分宽）"
+        allowLabel={false} metrics={metrics} onChange={onChange} />
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <FieldLabel>条粗 px</FieldLabel>
+        <TF type="number" className="w-full" defaultValue={String(w.height ?? 12)}
+          onChange={v => { w.height = +v || 12; onChange(); }} />
+      </div>
+    </div>
+  );
+}
+
 export function HtmlEditor({ w, onChange }: { w: HtmlWidget; onChange: () => void }) {
   // 示例片段要换掉整个编辑区：key 递增让 Textarea 重新挂载（defaultValue 只在挂载时吃）
   const [taKey, setTaKey] = useState(0);
@@ -1119,9 +1171,13 @@ function PresetThumb({ cfg }: { cfg: OverlayConfig }) {
       case "chips": return line(w.font ?? 15) + (w.margin_top ?? 10);
       case "text": return line(w.size ?? 19) + (w.margin_top ?? 0);
       case "stat": return line(w.size ?? 26);
-      case "progress": return w.height ?? 10;
+      case "progress":
+        return w.orientation === "v" ? (w.h ?? 40) : (w.height ?? 10);
       case "html": return w.h ?? 60;
-      case "gauge": return (w.size ?? 120) + (w.label ? 20 : 0);
+      case "gauge":
+        return (w.arc === "half" ? (w.size ?? 120) / 2 : (w.size ?? 120)) + (w.label ? 20 : 0);
+      case "light": return Math.max(w.size ?? 12, w.label ? line(15) : 0);
+      case "stackbar": return w.height ?? 12;
       default: return 40;
     }
   };

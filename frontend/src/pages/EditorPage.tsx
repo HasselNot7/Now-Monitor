@@ -1,9 +1,9 @@
 import { toast } from "../lib/toast";
 import {
-  Activity, AlignCenterHorizontal, AlignCenterVertical, AlignEndVertical, AlignLeft,
+  Activity, AlignCenterHorizontal, AlignCenterVertical, AlignEndVertical, AlignJustify, AlignLeft,
   AlignRight, AlignStartVertical, ArrowDownToLine, ArrowUpToLine, BarChart3, ChevronDown,
   ChevronRight, ChevronUp, CircleDashed, Code, Copy, Equal, Eye, EyeOff, Grid3x3,
-  Group as GroupIcon, Hash, Image as ImageIcon, LayoutGrid, Lock, LockOpen, Magnet, Minus,
+  Group as GroupIcon, Hash, Image as ImageIcon, LayoutGrid, Lightbulb, Lock, LockOpen, Magnet, Minus,
   Package, Pencil, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Plus,
   Rows3, Sigma, Square, Star, Tag, Trash2, Type, Ungroup as UngroupIcon,
 } from "lucide-react";
@@ -12,8 +12,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, clone, outPaths } from "../api";
 import type {
   CardsWidget, ChipsWidget, CustomComponent, FreePos, GaugeWidget, GroupedWidget, HtmlWidget,
-  LayoutPreset, NodeBase, OverlayConfig, ProgressWidget, SparkWidget, StatWidget, TextWidget,
-  ValueWidget, Widget,
+  LayoutPreset, LightWidget, NodeBase, OverlayConfig, ProgressWidget, SparkWidget, StackbarWidget,
+  StatWidget, TextWidget, ValueWidget, Widget,
 } from "../types";
 import type { Shared } from "../shared";
 import type { WidgetsMeta } from "../types";
@@ -21,9 +21,9 @@ import { Btn, FieldLabel, Hint, SubTitle, TSwitch } from "../ui";
 import { TF } from "./editors";
 import { clearDraft, loadDraft, saveDraft } from "../draftStore";
 import {
-  CanvasFields, CardsEditor, ChipsEditor, GaugeEditor, HtmlEditor, PromptBar,
-  ProgressEditor, PropsEditor, SparkEditor, StatEditor, StyleEditor, TemplatePicker, TextEditor,
-  ValueEditor,
+  CanvasFields, CardsEditor, ChipsEditor, GaugeEditor, HtmlEditor, LightEditor, PromptBar,
+  ProgressEditor, PropsEditor, SparkEditor, StackbarEditor, StatEditor, StyleEditor, TemplatePicker,
+  TextEditor, ValueEditor,
 } from "./editors";
 
 /** 版式编辑：Figma 式自由画布编辑器（流式排版已移除，一切版式都是自由画布）。
@@ -55,6 +55,7 @@ const ICON_MAP: Record<string, LucideIcon> = {
   "activity": Activity, "square": Square, "sigma": Sigma,
   "star": Star, "image": ImageIcon, "minus": Minus, "tag": Tag,
   "chart-bar": BarChart3,
+  "lightbulb": Lightbulb, "align-justify": AlignJustify,
 };
 
 const fallbackIcon = (t: string): LucideIcon =>
@@ -344,6 +345,8 @@ export default function EditorPage({ shared }: { shared: Shared }) {
   /** 右键上下文菜单 / 图层面板「添加部件」菜单 */
   const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  /** N1：添加菜单分节折叠态 —— classic（退役件）默认收起 */
+  const [collapsedCats, setCollapsedCats] = useState<Set<string>>(new Set(["classic"]));
   /** 空格按住 = 抓手模式（Figma 同款临时平移） */
   const [spaceDown, setSpaceDown] = useState(false);
   const [rects, setRects] = useState<(Rect | null)[]>([]);
@@ -819,15 +822,17 @@ export default function EditorPage({ shared }: { shared: Shared }) {
   /** Phase 13：把指标卡片拆成原子件——标题文字 / 大数字 / 进度条 / 柱状条 / 次要行。
    * 几何按渲染器同一套布局公式从部件矩形内推算（标题 21 + 间 5 + 条行 18 + 间 5 + 底行 17），
    * 拆出的全是普通部件（结成一组、组名自动起），随便改随便删；一次历史可整体撤销。
-   * 旧组件由此渐进迁移成积木组合，卡片本身原样保留、不强制拆。 */
-  const explodeCards = (i: number) => {
+   * 旧组件由此渐进迁移成积木组合，卡片本身原样保留、不强制拆。
+   * N1 batch：软着陆横幅的批量入口传 { batch: true } —— 不推历史/不弹 toast/不 setDraft，
+   * 只原地改 draftRef 并返回拆出件数（0 = 没拆成），历史与重绘由调用方统一做。 */
+  const explodeCards = (i: number, opts?: { batch?: boolean }): number => {
     const d = draftRef.current;
     const w = d?.widgets[i];
-    if (!d || !w || w.type !== "cards") return;
+    if (!d || !w || w.type !== "cards") return 0;
     const r = rectsRef.current[i];
     if (!r) {
-      toast.default("卡片几何还没回报，稍等一下再拆", { timeout: 2000 });
-      return;
+      if (!opts?.batch) toast.default("卡片几何还没回报，稍等一下再拆", { timeout: 2000 });
+      return 0;
     }
     const st = (w.style ?? {}) as Record<string, unknown>;
     const cols = Math.max(1, w.cols ?? 4);
@@ -838,7 +843,8 @@ export default function EditorPage({ shared }: { shared: Shared }) {
     const titleH = 21, gapY = 5, subH = 17;
     const sparkW = Math.max(40, Math.min(300, (st.spark_w as number) ?? 82));
     const sparkH = Math.max(10, Math.min(60, (st.spark_h as number) ?? 17));
-    const gid = `g${Date.now().toString(36)}`;
+    // gid 带随机后缀：横幅批量同毫秒连拆多张卡时 Date.now() 相同，裸时间戳必撞组
+    const gid = `g${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
     const atoms: Widget[] = [];
     (w.items ?? []).forEach((c, k) => {
       const cx = r.x + (k % cols) * (cw + gap);
@@ -880,16 +886,93 @@ export default function EditorPage({ shared }: { shared: Shared }) {
       } as unknown as Widget);
     });
     if (!atoms.length) {
-      toast.default("这张卡片没有可拆的内容", { timeout: 2000 });
+      if (!opts?.batch) toast.default("这张卡片没有可拆的内容", { timeout: 2000 });
+      return 0;
+    }
+    if (!opts?.batch) pushHistory();
+    d.groups = { ...(d.groups ?? {}), [gid]: `卡片拆件 · ${w.items?.length ?? 0} 张` };
+    d.widgets.splice(i, 1, ...atoms);
+    if (!opts?.batch) {
+      clearSel();
+      setDraft({ ...d });
+      onChange();
+      toast.success(`已拆成 ${atoms.length} 个原子件并成组`, { timeout: 2000 });
+    }
+    return atoms.length;
+  };
+
+  /** N1（D5-A）：chips 的一键拆解 —— 整行小指标换成单个「数值组」原子件
+   * （value 与 chips 互为原子形态，见注册表 summary）。宽必须取 rects 实宽写进
+   * 原子 w（用户口径），x/y 原位；items 字符串/引用统一映射成 metrics 组，
+   * 文字/名字色跟随 chips 外观。batch 语义与 explodeCards 相同。 */
+  const explodeChips = (i: number, opts?: { batch?: boolean }): number => {
+    const d = draftRef.current;
+    const w = d?.widgets[i];
+    if (!d || !w || w.type !== "chips") return 0;
+    const r = rectsRef.current[i];
+    if (!r) {
+      if (!opts?.batch) toast.default("小指标行几何还没回报，稍等一下再拆", { timeout: 2000 });
+      return 0;
+    }
+    const items = (w.items ?? []) as (string | { metric: string })[];
+    const metrics = items.map(it => (typeof it === "string" ? { metric: it } : it));
+    if (!metrics.length) {
+      if (!opts?.batch) toast.default("这行小指标没有可拆的内容", { timeout: 2000 });
+      return 0;
+    }
+    const st = (w.style ?? {}) as Record<string, unknown>;
+    const atom = {
+      type: "value",
+      metrics: { metrics },
+      size: w.font ?? 15,
+      show_name: true,
+      x: r.x, y: r.y, w: r.w,
+      ...(typeof st.label === "string" || typeof st.color === "string" ? {
+        style: {
+          ...(typeof st.label === "string" ? { label: st.label } : {}),
+          ...(typeof st.color === "string" ? { color: st.color } : {}),
+        },
+      } : {}),
+    } as unknown as Widget;
+    if (!opts?.batch) pushHistory();
+    d.widgets.splice(i, 1, atom);
+    if (!opts?.batch) {
+      clearSel();
+      setDraft({ ...d });
+      onChange();
+      toast.success("已拆成 1 个数值组原子件", { timeout: 2000 });
+    }
+    return 1;
+  };
+
+  /** N1 软着陆横幅的一键拆解：cards/chips 全拆成原子件，一次历史整体可撤销。
+   * 倒序遍历（拆解是 splice(i, 1, …)，先高后低下标不漂移，rects 也不错位）；
+   * 个别件几何还没回报就跳过并提示，其余照拆。 */
+  const explodeAllClassic = () => {
+    const d = draftRef.current;
+    if (!d) return;
+    // 先预筛「rects 已实报」的下标再推历史（用户口径）：全部跳过就不动历史栈
+    const idxs = d.widgets
+      .map((w, i) => ((w.type === "cards" || w.type === "chips") && rectsRef.current[i]) ? i : -1)
+      .filter(i => i >= 0).reverse();
+    if (!idxs.length) {
+      toast.default(d.widgets.some(w => w.type === "cards" || w.type === "chips")
+        ? "经典部件的几何还没回报，稍等一下再拆" : "没有可拆解的经典部件", { timeout: 2500 });
       return;
     }
     pushHistory();
-    d.groups = { ...(d.groups ?? {}), [gid]: `卡片拆件 · ${w.items?.length ?? 0} 张` };
-    d.widgets.splice(i, 1, ...atoms);
+    let done = 0, skipped = 0;
+    for (const i of idxs) {
+      const w = d.widgets[i];
+      const n = w?.type === "cards" ? explodeCards(i, { batch: true })
+        : w?.type === "chips" ? explodeChips(i, { batch: true }) : 0;
+      if (n > 0) done++; else skipped++;
+    }
     clearSel();
     setDraft({ ...d });
     onChange();
-    toast.success(`已拆成 ${atoms.length} 个原子件并成组`, { timeout: 2000 });
+    if (skipped) toast.default(`已拆解 ${done} 个，${skipped} 个没有可拆的内容`, { timeout: 3000 });
+    else toast.success(`已拆解 ${done} 个经典部件`, { timeout: 2500 });
   };
 
   /** Phase 14：把选中集存成自定义组件——坐标按选中集包围盒左上角归一到 0,0，
@@ -1868,7 +1951,11 @@ export default function EditorPage({ shared }: { shared: Shared }) {
           const t0 = cur.widgets[d.i].type;
           if (t0 === "html" || t0 === "spark" || t0 === "panel" || t0 === "divider"
             || t0 === "image") (w as HtmlWidget).h = d.nh;
-          if (t0 === "progress") (w as ProgressWidget).height = d.nh;
+          if (t0 === "progress") {
+            // N2/D3-A：竖条长吃几何 h（n/s 改 w.h，w.w 仍是粗）；横条维持旧口径（n/s 改条粗 height 属性）
+            if ((cur.widgets[d.i] as ProgressWidget).orientation === "v") w.h = d.nh;
+            else (w as ProgressWidget).height = d.nh;
+          }
           if (t0 === "gauge") {
             (w as GaugeWidget).size = Math.max(48, Math.round(d.nw));
             w.w = Math.round(d.nw);
@@ -1906,6 +1993,8 @@ export default function EditorPage({ shared }: { shared: Shared }) {
     ICON_MAP[meta?.widgets[t]?.icon ?? ""] ?? fallbackIcon(t);
   // Figma 图层序：顶层在上 —— 数组越靠后（越盖在上面）越先列
   const frontToBack = draft.widgets.map((_, i) => i).reverse();
+  // N1 软着陆：成品件（cards/chips）计数 —— 横幅的显示条件，拆完自然归零
+  const classicCount = draft.widgets.filter(w => w.type === "cards" || w.type === "chips").length;
 
   // 图层树（Phase 4）：组按路径聚合成可展开节点。rep = 该组最上层成员的下标，
   // 同级按它排 —— 面板顺序与画布层序一致；子组嵌在父组的 kids 里。
@@ -2061,6 +2150,17 @@ export default function EditorPage({ shared }: { shared: Shared }) {
        ["spark", "迷你曲线"], ["html", "自定义 HTML"], ["icon", "图标"], ["image", "图片"],
        ["divider", "分隔线"], ["badge", "徽章"], ["cards", "指标卡片"], ["chips", "小指标行"],
        ["text", "文本"], ["panel", "背景面板"]];
+  // N1 菜单分节：节序/节名 = 后端 CATEGORIES（SSOT），归节看各件的 category，
+  // 组内序 = meta.order。meta 没拉到（老后端/断网）退化成单节平铺，不丢件。
+  const addSections: { id: string; label: string; types: string[] }[] = meta?.categories?.length
+    ? meta.categories
+        .map(c => ({
+          id: c.id,
+          label: c.label,
+          types: (meta.order ?? []).filter(t => (meta.widgets[t]?.category ?? "advanced") === c.id),
+        }))
+        .filter(s => s.types.length)
+    : [{ id: "all", label: "全部部件", types: ADD_TYPES.map(([t]) => t) }];
 
   return (
     <main className="fixed inset-y-0 right-0 left-72 z-10 flex flex-col bg-background">
@@ -2094,6 +2194,19 @@ export default function EditorPage({ shared }: { shared: Shared }) {
           </Seg>
         </SegGroup>
       </header>
+
+      {/* N1 软着陆：版式里还有成品件（cards/chips）时提示一键拆解为原子件；拆完自然消失 */}
+      {classicCount > 0 && (
+        <div className="flex h-10 shrink-0 items-center gap-3 border-b border-white/[0.06] bg-warning/[0.08] px-6 text-sm text-warning">
+          <span className="min-w-0 flex-1 truncate">
+            检测到 {classicCount} 个经典部件，可一键拆解为原子件
+          </span>
+          <button type="button" onClick={explodeAllClassic}
+            className="flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-lg bg-warning/15 px-3 text-sm font-medium text-warning transition-colors hover:bg-warning/25">
+            <UngroupIcon size={14} /> 一键拆解
+          </button>
+        </div>
+      )}
 
       <div className="flex min-h-0 flex-1">
         {/* 图层面板（Figma 左栏）：顶层在上；悬停出层级/删除按钮；右键有菜单 */}
@@ -2140,16 +2253,37 @@ export default function EditorPage({ shared }: { shared: Shared }) {
           {/* 添加部件：NP「更多」式的大药丸，菜单浮在其上方 */}
           <div className="relative p-1">
             {addOpen && (
-              <div className="absolute bottom-13 left-0 z-50 w-full rounded-2xl bg-[#26262a] p-1.5 shadow-2xl"
+              <div className="absolute bottom-13 left-0 z-50 max-h-[min(72vh,560px)] w-full overflow-y-auto rounded-2xl bg-[#26262a] p-1.5 shadow-2xl"
                 onMouseDown={e => e.stopPropagation()}>
-                {ADD_TYPES.map(([t, label]) => {
-                  const Icon = widgetIcon(t);
+                {addSections.map(sec => {
+                  const collapsed = collapsedCats.has(sec.id);
                   return (
-                    <button key={t} type="button"
-                      className="flex h-11 w-full cursor-pointer items-center gap-3 rounded-xl px-3 text-left text-[15px] text-foreground transition-colors hover:bg-white/[0.08]"
-                      onClick={() => { setAddOpen(false); addFree(t); }}>
-                      <Icon size={16} strokeWidth={1.8} className="text-default-500" /> {label}
-                    </button>
+                    <div key={sec.id}>
+                      <button type="button"
+                        className="flex h-8 w-full cursor-pointer items-center gap-1.5 rounded-lg px-2.5 text-xs font-bold text-default-500 transition-colors hover:bg-white/[0.04]"
+                        onClick={() => setCollapsedCats(prev => {
+                          const next = new Set(prev);
+                          if (next.has(sec.id)) next.delete(sec.id); else next.add(sec.id);
+                          return next;
+                        })}>
+                        <ChevronDown size={12} className={`transition-transform duration-150 ${collapsed ? "-rotate-90" : ""}`} />
+                        {sec.label}
+                        <span className="ml-auto font-normal">{sec.types.length}</span>
+                      </button>
+                      {sec.id === "classic" && !collapsed && (
+                        <div className="pb-1 pl-4 text-[11px] font-normal text-warning">建议用原子件拼装</div>
+                      )}
+                      {!collapsed && sec.types.map(t => {
+                        const Icon = widgetIcon(t);
+                        return (
+                          <button key={t} type="button"
+                            className="flex h-11 w-full cursor-pointer items-center gap-3 rounded-xl px-3 text-left text-[15px] text-foreground transition-colors hover:bg-white/[0.08]"
+                            onClick={() => { setAddOpen(false); addFree(t); }}>
+                            <Icon size={16} strokeWidth={1.8} className="text-default-500" /> {widgetLabel(t)}
+                          </button>
+                        );
+                      })}
+                    </div>
                   );
                 })}
                 {components.length > 0 && (
@@ -2493,8 +2627,12 @@ export default function EditorPage({ shared }: { shared: Shared }) {
                   {numInput("X", "x", pos.x)}
                   {numInput("Y", "y", pos.y)}
                   {showW && numInput("宽", "w", pos.w)}
-                  {["html", "spark", "panel", "image", "divider"].includes(w.type) && numInput("高", "h", pos.h)}
-                  {w.type === "progress" && numInput("高", "height", (w as ProgressWidget).height)}
+                  {["html", "spark", "panel", "image", "divider"].includes(w.type)
+                    || (w.type === "progress" && (w as ProgressWidget).orientation === "v")
+                    ? numInput("高", "h", pos.h) : null}
+                  {/* 横向 progress 的「高」= 条粗（height 属性）；竖条长走上面几何 高、粗走几何 宽 */}
+                  {w.type === "progress" && (w as ProgressWidget).orientation !== "v"
+                    && numInput("高", "height", (w as ProgressWidget).height)}
                   {numInput("旋转 °", "rotation", (w as NodeBase).rotation ?? 0,
                     v => ((Math.round(v) % 360) + 360) % 360)}
                 </div>
@@ -2585,6 +2723,8 @@ export default function EditorPage({ shared }: { shared: Shared }) {
                   {w.type === "chips" && <ChipsEditor w={w as ChipsWidget} metrics={metrics} onChange={onChange} />}
                   {w.type === "text" && <TextEditor w={w as TextWidget} metrics={metrics} onChange={onChange} compact />}
                   {w.type === "value" && <ValueEditor w={w as ValueWidget} metrics={metrics} onChange={onChange} compact />}
+                  {w.type === "light" && <LightEditor w={w as LightWidget} metrics={metrics} onChange={onChange} compact />}
+                  {w.type === "stackbar" && <StackbarEditor w={w as StackbarWidget} metrics={metrics} onChange={onChange} />}
                 </div>
                 {/* 属性：按后端 props_schema 自动生成（icon/image/divider/badge 这类
                     简单件的内容字段）；复杂件继续走上面的手写编辑器 */}

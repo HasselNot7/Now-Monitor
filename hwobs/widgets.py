@@ -209,13 +209,24 @@ PROGRESS_STYLE = COMMON_STYLE + [
     _style_field("radius", "圆角 px", "int", min=0, max=20, default=4),
 ]
 
+# N2（D3-A）：orientation="v" 竖条长吃几何 h、粗吃几何 w —— 箱即条、所见即选框，
+# 与 divider「横 w 竖 h」的长度惯例对齐；横条的 height 属性（条粗）竖向下不参与。
+PROGRESS_PROPS = [
+    {"key": "orientation", "label": "方向", "type": "select",
+     "options": ["h", "v"], "default": "h"},
+]
+
 
 def progress_height(w):
+    if w.get("orientation") == "v":
+        return _int_in(w, "h", 40, 1, 2000)
     return _int_in(w, "height", 10, 4, 100)
 
 
 def progress_validate(w, errors, warnings):
     _metric(w, errors, "progress")
+    if w.get("orientation") not in (None, "h", "v"):
+        errors.append(f"progress.orientation 只支持 h / v（现在是 {w.get('orientation')!r}）")
     _style_check(PROGRESS_STYLE, w.get("style"), errors, warnings)
 
 
@@ -235,16 +246,26 @@ def html_validate(w, errors, warnings):
 GAUGE_STYLE = COMMON_STYLE + [
     _style_field("track", "轨道颜色", "color"),
     _style_field("show_value", "圆环中央显示数值", "bool", default=True),
+    _style_field("show_needle", "中心指针线（half 上半环仪表惯例）", "bool", default=False),
+]
+
+# N2（D6）：arc="half" = 上半环 180°，直播指针仪表惯例朝上；虚线 9 点钟顺时针扫到 3 点钟。
+GAUGE_PROPS = [
+    {"key": "arc", "label": "弧形", "type": "select",
+     "options": ["full", "half"], "default": "full"},
 ]
 
 
 def gauge_height(w):
     size = _int_in(w, "size", 120, 48, 600)
-    return size + (20 if w.get("label") else 0)
+    h = size // 2 if w.get("arc") == "half" else size
+    return h + (20 if w.get("label") else 0)
 
 
 def gauge_validate(w, errors, warnings):
     _metric(w, errors, "gauge")
+    if w.get("arc") not in (None, "full", "half"):
+        errors.append(f"gauge.arc 只支持 full / half（现在是 {w.get('arc')!r}）")
     ring = w.get("ring")
     if ring is not None and (not isinstance(ring, int) or not 2 <= ring <= 40):
         errors.append("gauge.ring（环宽）必须是 2~40 的整数")
@@ -284,6 +305,7 @@ def bars_validate(w, errors, warnings):
 
 SPARK_STYLE = COMMON_STYLE + [
     _style_field("fill", "填充曲线下面积", "bool", default=True),
+    _style_field("show_peak", "右上角窗口峰值", "bool", default=False),
 ]
 
 
@@ -417,10 +439,54 @@ def badge_validate(w, errors, warnings):
     _style_check(COMMON_STYLE, w.get("style"), errors, warnings)
 
 
+# --- light：状态灯（N3） -------------------------------------------------------
+# 单指标三态圆点：常态 --bar-fill、告警 --bar-high（isHigh 判定）、缺数据壳 CSS
+# .tmiss 灰点。颜色全在渲染端 CSS，这里零色键；blink 键位渲染端注释预留（D4-A）。
+
+def light_height(w):
+    s = _int_in(w, "size", 12, 6, 64)
+    return max(s, _line_h(15)) if w.get("label") else s
+
+
+def light_validate(w, errors, warnings):
+    _metric(w, errors, "light")
+    _style_check(COMMON_STYLE, w.get("style"), errors, warnings)
+
+
+# --- stackbar：堆叠条（N3） ----------------------------------------------------
+# 长吃几何 w、粗吃 height 属性（与 progress 横条同口径）；metrics 组复用 GroupDef
+# （refs.GROUP_KEYS 已含 "metrics"，引用遍历零新增）。段配色渲染端派生（D1-A）。
+
+STACKBAR_STYLE = COMMON_STYLE + [
+    _style_field("track", "轨道颜色", "color"),
+    _style_field("radius", "圆角 px", "int", min=0, max=20, default=4),
+]
+
+
+def stackbar_height(w):
+    return _int_in(w, "height", 12, 4, 100)
+
+
+def stackbar_validate(w, errors, warnings):
+    metrics = w.get("metrics")
+    if not isinstance(metrics, dict) or not isinstance(metrics.get("metrics"), list) \
+            or not metrics["metrics"]:
+        errors.append("stackbar 部件必须有非空的 metrics 组（{metrics: [...]}）")
+    else:
+        # pair/diff 是组合值（无单值 metric），渲染端 dig 取不到 → 段宽按 0，只警告不拦
+        odd = [i for i, m in enumerate(metrics["metrics"], 1)
+               if isinstance(m, dict) and (m.get("pair") or m.get("diff"))]
+        if odd:
+            warnings.append(f"stackbar 第 {', '.join(map(str, odd))} 项是 pair/diff 组合值，"
+                            "取不到单值，段宽会按 0 处理（建议换单指标）")
+    _style_check(STACKBAR_STYLE, w.get("style"), errors, warnings)
+
+
 WIDGETS = {
     "cards": {
         "label": "指标卡片", "icon": "layout-grid",
         "summary": "指标卡片网格：标题 + 进度条 + 次要行 + 迷你曲线",
+        "category": "classic",
         "defaults": {"cols": 4, "gap": 32, "item_height": 66},
         "style_schema": CARD_STYLE,
         "height": cards_height,
@@ -429,6 +495,7 @@ WIDGETS = {
     "chips": {
         "label": "小指标行", "icon": "rows-3",
         "summary": "底部小指标行：一行紧凑的 名称+值",
+        "category": "classic",
         "defaults": {"font": 15, "margin_top": 10, "fit": "shrink"},
         "style_schema": CHIPS_STYLE,
         "height": chips_height,
@@ -437,6 +504,7 @@ WIDGETS = {
     "text": {
         "label": "自定义文字", "icon": "type",
         "summary": "自定义文本行，正文用 {cpu.usage} 这类占位符插入指标值",
+        "category": "data",
         "defaults": {"size": 19, "margin_top": 0},
         "style_schema": COMMON_STYLE,
         "height": text_height,
@@ -445,6 +513,7 @@ WIDGETS = {
     "stat": {
         "label": "大数字", "icon": "hash",
         "summary": "自由画布：单指标大数字，可带名字",
+        "category": "data",
         "defaults": {"size": 26},
         "style_schema": COMMON_STYLE,
         "height": stat_height,
@@ -452,23 +521,28 @@ WIDGETS = {
     },
     "progress": {
         "label": "进度条", "icon": "equal",
-        "summary": "自由画布：单指标进度条（按指标量程定标）",
-        "defaults": {"w": 260, "height": 10},
+        "summary": "自由画布：单指标进度条（按指标量程定标，可横可竖）",
+        "category": "chart",
+        "defaults": {"w": 260, "height": 10, "orientation": "h"},
         "style_schema": PROGRESS_STYLE,
+        "props_schema": PROGRESS_PROPS,
         "height": progress_height,
         "validate": progress_validate,
     },
     "gauge": {
         "label": "圆环仪表", "icon": "circle-dashed",
         "summary": "环形仪表：单指标圆环，按指标量程定标，可带标签",
-        "defaults": {"size": 120, "ring": 10},
+        "category": "chart",
+        "defaults": {"size": 120, "ring": 10, "arc": "full"},
         "style_schema": GAUGE_STYLE,
+        "props_schema": GAUGE_PROPS,
         "height": gauge_height,
         "validate": gauge_validate,
     },
     "html": {
         "label": "自定义 HTML", "icon": "code",
         "summary": "自由画布：自定义 HTML 片段，带 <script> 的动态片段走 HWOB API",
+        "category": "advanced",
         "defaults": {"w": 300, "h": 60},
         "style_schema": COMMON_STYLE,
         "height": html_height,
@@ -477,6 +551,7 @@ WIDGETS = {
     "spark": {
         "label": "迷你曲线", "icon": "activity",
         "summary": "自由画布：单指标迷你曲线（面积图，按窗口内峰值定标）",
+        "category": "chart",
         "defaults": {"w": 120, "h": 32, "samples": 30},
         "style_schema": SPARK_STYLE,
         "height": spark_height,
@@ -485,14 +560,25 @@ WIDGETS = {
     "bars": {
         "label": "柱状条", "icon": "chart-bar",
         "summary": "自由画布：单指标柱状直方图（卡片内嵌曲线的独立形态）",
+        "category": "chart",
         "defaults": {"w": 120, "h": 32, "samples": 30},
         "style_schema": COMMON_STYLE,
         "height": bars_height,
         "validate": bars_validate,
     },
+    "stackbar": {
+        "label": "堆叠条", "icon": "align-justify",
+        "summary": "自由画布：一组指标按值占比横排分段（缺数段按 0，全缺整条置灰）",
+        "category": "chart",
+        "defaults": {"w": 260, "height": 12},
+        "style_schema": STACKBAR_STYLE,
+        "height": stackbar_height,
+        "validate": stackbar_validate,
+    },
     "value": {
         "label": "数值组", "icon": "sigma",
         "summary": "自由画布：一组数值（可带名字/分隔符）—— 卡片数字行与 chips 的原子形态",
+        "category": "data",
         "defaults": {"size": 19},
         "style_schema": COMMON_STYLE,
         "height": value_height,
@@ -501,6 +587,7 @@ WIDGETS = {
     "panel": {
         "label": "背景面板", "icon": "square",
         "summary": "自由画布：纯底色矩形，垫在其他部件后面，自己拼卡片",
+        "category": "layout",
         "defaults": {"w": 200, "h": 100},
         "style_schema": PANEL_STYLE,
         "height": panel_height,
@@ -509,6 +596,7 @@ WIDGETS = {
     "icon": {
         "label": "图标", "icon": "star",
         "summary": "内置线性图标（cpu/温度/电量/网速…），颜色随外观文字色",
+        "category": "layout",
         "defaults": {"name": "cpu", "size": 24},
         "style_schema": COMMON_STYLE,
         "props_schema": ICON_PROPS,
@@ -518,6 +606,7 @@ WIDGETS = {
     "image": {
         "label": "图片", "icon": "image",
         "summary": "URL 图片，cover / contain / fill 适应，圆角描边走外观",
+        "category": "layout",
         "defaults": {"w": 200, "h": 150},
         "style_schema": COMMON_STYLE,
         "props_schema": IMAGE_PROPS,
@@ -527,6 +616,7 @@ WIDGETS = {
     "divider": {
         "label": "分隔线", "icon": "minus",
         "summary": "横 / 竖分隔线，粗细与颜色可调（线条颜色走外观「次要」）",
+        "category": "layout",
         "defaults": {"w": 200, "thickness": 2},
         "style_schema": COMMON_STYLE,
         "props_schema": DIVIDER_PROPS,
@@ -536,19 +626,34 @@ WIDGETS = {
     "badge": {
         "label": "徽章", "icon": "tag",
         "summary": "药丸底文字，支持 {路径} 插值（底色/描边走外观底色）",
+        "category": "data",
         "defaults": {"size": 15, "text": "{time}"},
         "style_schema": COMMON_STYLE,
         "props_schema": BADGE_PROPS,
         "height": badge_height,
         "validate": badge_validate,
     },
+    "light": {
+        "label": "状态灯", "icon": "lightbulb",
+        "summary": "状态灯：单指标正常/告警/缺数据三色圆点，可带名字",
+        "category": "data",
+        "defaults": {"size": 12},
+        "style_schema": COMMON_STYLE,
+        "height": light_height,
+        "validate": light_validate,
+    },
 }
 
 
-# 「添加部件」菜单的展示顺序（meta.order 用）；登记顺序本身不承载语义。
-# 原子件排在前、成品件（cards/chips）与垫底的 panel 收尾。
-MENU_ORDER = ["stat", "value", "progress", "gauge", "spark", "bars", "html", "icon",
-              "image", "divider", "badge", "cards", "chips", "text", "panel"]
+# 「添加部件」菜单：节顺序与节名在 CATEGORIES（SSOT），归节看各登记的 category；
+# MENU_ORDER 只决定同一节内谁先谁后（组内排序），登记顺序本身不承载语义。
+MENU_ORDER = ["stat", "value", "progress", "gauge", "spark", "bars", "stackbar", "html", "icon",
+              "image", "divider", "badge", "light", "cards", "chips", "text", "panel"]
+
+CATEGORIES = [
+    ("data", "数据"), ("chart", "图表"), ("layout", "布局"),
+    ("classic", "经典（旧）"), ("advanced", "高级"),
+]
 
 
 def get(wtype):

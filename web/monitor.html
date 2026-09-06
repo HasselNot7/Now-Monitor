@@ -141,7 +141,8 @@
       height: 100%;
       width: 0%;
       background-color: var(--bar-fill);
-      transition: width var(--anim-ms) ease, background-color var(--anim-ms) ease;
+      /* height 过渡给竖向 progress 用（N2/D3-A），横条 height 恒 100% 无观感变化 */
+      transition: width var(--anim-ms) ease, height var(--anim-ms) ease, background-color var(--anim-ms) ease;
     }
 
     .metric-sub {
@@ -201,6 +202,19 @@
       background: var(--bar-bg); border-radius: 999px; padding: 3px 12px;
     }
     .free-badge .tmiss { color: var(--subtext-color); }
+
+    /* N3：状态灯 —— 三态色全走主题变量（常态/告警/缺数据灰点），时长走 --anim-ms */
+    .free-light { display: inline-flex; align-items: center; gap: 7px; }
+    .free-light .light-dot { border-radius: 999px; background: var(--bar-fill); transition: background-color var(--anim-ms) ease; }
+    .free-light.high .light-dot { background: var(--bar-high); }
+    .free-light.tmiss .light-dot { background: var(--subtext-color); }
+    .free-light .light-label { font-size: 15px; color: var(--label-color); }
+
+    /* N3：堆叠条 —— 分段宽度过渡走 --anim-ms；轨道色 = --bar-bg（外观 track 覆盖）；
+       全缺/全零整条 .tmiss 压暗 */
+    .free-stackbar { display: flex; overflow: hidden; background: var(--bar-bg); }
+    .free-stackbar.tmiss { opacity: 0.5; }
+    .free-stackbar .stack-seg { height: 100%; width: 0%; transition: width var(--anim-ms) ease; }
   </style>
 </head>
 <body>

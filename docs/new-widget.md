@@ -6,9 +6,12 @@
 
 ### 1. `hwobs/widgets.py` 登记（单一来源）
 
-`WIDGETS`（`hwobs/widgets.py:420`）里加一项，照 `"divider"`（`hwobs/widgets.py:527`）的样子：
+`WIDGETS`（`hwobs/widgets.py:485`）里加一项，照 `"divider"`（`hwobs/widgets.py:616`）的样子：
 
 - `label` / `icon` / `summary`：管理页展示；
+- `category`（N1 起必填）：菜单归节，取值 `data` / `chart` / `layout` / `classic` / `advanced`；
+  节顺序与节名在 `CATEGORIES`（`hwobs/widgets.py:653`）。meta 端点按 `v["category"]` 严格取，
+  漏登记会把 `/api/widgets/meta` 整个顶穿（编辑器退化成无分节兜底菜单）；
 - `defaults`：编辑器「添加部件」的初始值。**必须与工厂里的 `w.key ?? 兜底` 同键同值**，
   `python scripts/check-defaults.py` 把关（含 props_schema default 与 defaults 的同键对账；
   chips `fit` 的 `|| 'none'` 是刻意的两层容错，脚本已豁免，见脚本 docstring）；
@@ -17,8 +20,13 @@
 - `style_schema`：外观控件据此自动生成（通用键见 `COMMON_STYLE`，`hwobs/widgets.py:44`），
   渲染端由 `applyStyle` 消费，工厂不用自己解析通用键；
 - 字段型部件（下拉/数字/开关）再加 `props_schema`，编辑器属性面板自动生成
-  （参照 `DIVIDER_PROPS`，`hwobs/widgets.py:349`）。
-- 新部件若要进「添加部件」菜单首位区，同步 `MENU_ORDER`（`hwobs/widgets.py:550`）。
+  （参照 `DIVIDER_PROPS`，`hwobs/widgets.py:371`）。
+- 同步 `MENU_ORDER`（`hwobs/widgets.py:650`）——它只管**组内排序**：节间顺序在
+  `CATEGORIES`，归节看各件的 `category`，三者别混。
+- **编辑器 height 镜像**：模板缩略图的 `estH`（`frontend/src/pages/editors.tsx:1164`）
+  按 type 复算占高，新件加 case、改高度口径同步改。同族镜像还有两处，改几何/缩放
+  口径时一起看：画布缩放落盘（EditorPage 的 resize commit——progress 按方向写
+  `w.h` / `height`，N2 实测抓出的旧口径 bug）与属性面板几何字段（竖条显示几何 高）。
 
 ### 2. `web/overlay/widgets/xxx.js` 工厂
 
@@ -46,7 +54,7 @@ metrics/pair/diff/items/value/sub 之外的键）必须同步进这两个元组�
 
 ### 5. 进 `docs/gallery.overlay.json`
 
-15+ 部件画廊（`docs/gallery.overlay.json`）是观感回归的肉眼基线：新部件摆进去，
+26 部件画廊（`docs/gallery.overlay.json`）是观感回归的肉眼基线：新部件摆进去，
 改任何渲染/样式代码后导入过一遍。用法：编辑器「模板」弹窗支持导入文件
 （认 `{name,desc,config}` 封装，也认裸版式 JSON —— `frontend/src/pages/editors.tsx:1211`），
 把这份 JSON 导入即可；导入后 `POST /api/layout-check` 应零 error。
@@ -88,9 +96,35 @@ metrics/pair/diff/items/value/sub 之外的键）必须同步进这两个元组�
 2. 刷新叠加层/编辑器页（boot 重新拉 `/metrics.json`），progress 告警色可见，截图；
 3. **还原阈值**，再刷新确认不亮。
 
-## 五、自查两条
+## 五、决策与记档（N2–N3）
+
+拍板结论落在这里，改相关代码先读这节。
+
+- **D1-A stackbar 配色**：种子 = `--bar-fill` 解析色相（外观 accent 覆盖会跟随），
+  第 i 段 hue + i×137.5°（黄金角），S 40% / L 62% 固定柔和度；种子非六位 hex 或
+  无彩度时回退 Nord 六色循环。段色延迟到首次 update 再算——build 在工厂之后才
+  applyStyle，工厂里早算拿到的是覆盖前的变量值（8 段实测两两最小色相差 24°）。
+- **D2-A gauge 指针**：中心指针线（SVG line，文字色，长 0.72r，圆帽），CSS
+  transform rotate 过渡（transformOrigin 定圆心），与 dashoffset 同走 `--anim-ms`。
+- **D3-A 竖条几何**：`progress` orientation="v" 长吃几何 h、粗吃几何 w（箱即条，
+  所见即选框）；横条维持「长=几何 w、粗=height 属性」旧口径。编辑器三处随方向
+  分叉：缩放落盘（EditorPage 的 resize commit：竖条 n/s 写 `w.h`，横条写 `height`）、
+  属性面板几何字段（竖条显示几何 高）、模板缩略图 estH。
+- **D4-A 死旋钮不留**：light 的 `style.blink` 只在工厂注释预留键位，不进
+  style_schema；StackbarEditor 不开 allowLabel（段不渲染名字，label 是死旋钮）。
+- **D5-A chips 拆解**：`explodeChips`（编辑器侧）把整行换成单个 value 原子件，
+  宽必须取 rects 实宽；软着陆横幅批量拆解一次 pushHistory（倒序遍历防下标漂移），
+  explodeCards 的 gid 带随机后缀（同毫秒连拆不撞组）。
+- **D6 gauge half = 上半环 180°**：9 点钟顺时针扫到 3 点钟，svg 下缘自然裁掉
+  下半；轨道吃同一段弧；`--gauge-size` 减半让数值居上半区。
+- **stackbar pair/diff**：组内 pair/diff 条目取不到单值，段宽按 0——校验器只
+  warning 不拦（N3 review）。
+- **记档不修（N2 review）**：① spark 峰值标注读 target；② gauge half 奇数 size
+  时校验器 `size//2` 与渲染 `size/2` 差 0.5px。
+
+## 六、自查两条
 
 ```
 python scripts/check-defaults.py     # 全绿
-python -m hwobs                      # 导 gallery → layout-check 零 error → 15+ 部件肉眼过一遍
+python -m hwobs                      # 导 gallery → layout-check 零 error → 26 部件肉眼过一遍
 ```

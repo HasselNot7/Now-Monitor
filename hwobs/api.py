@@ -75,11 +75,13 @@ def create_app() -> FastAPI:
     @app.get("/api/widgets/meta")
     def widgets_meta():
         """部件注册表元数据：编辑器据此渲染组件菜单、默认值和「外观」控件，
-        渲染器拿 themes 解析 canvas.theme —— 三端单一来源，不再各抄一份。"""
+        渲染器拿 themes 解析 canvas.theme —— 三端单一来源，不再各抄一份。
+        categories/category（N1）管「添加部件」菜单的分节：节序/节名/归节都在 widgets.py。"""
         order = [t for t in widgets.MENU_ORDER if t in widgets.WIDGETS]
         order += [t for t in widgets.WIDGETS if t not in order]
         return {
             "order": order,
+            "categories": [{"id": cid, "label": label} for cid, label in widgets.CATEGORIES],
             "widgets": {
                 k: {
                     "label": v["label"],
@@ -88,6 +90,7 @@ def create_app() -> FastAPI:
                     "defaults": v["defaults"],
                     "style_schema": v["style_schema"],
                     "props_schema": v.get("props_schema") or [],
+                    "category": v["category"],
                 }
                 for k, v in widgets.WIDGETS.items()
             },

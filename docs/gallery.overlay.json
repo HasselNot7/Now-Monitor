@@ -1,10 +1,10 @@
 {
   "version": 2,
   "name": "widget-gallery",
-  "canvas": { "w": 1600, "h": 500, "mode": "free", "theme": "nord-console" },
+  "canvas": { "w": 1600, "h": 920, "mode": "free", "theme": "nord-console" },
   "prompt": {
     "user": "gallery",
-    "cmd": "./now-monitor --widgets=15",
+    "cmd": "./now-monitor --widgets=26",
     "cursor": true,
     "size": 19,
     "x": 24,
@@ -67,6 +67,17 @@
       "type": "badge",
       "x": 24, "y": 430, "size": 15,
       "text": "注册但缺传感器（tmiss 演示）：{misc.mobo_temp}"
-    }
+    },
+    { "type": "progress", "x": 24, "y": 540, "w": 14, "h": 90, "orientation": "v", "metric": "cpu.usage" },
+    { "type": "gauge", "x": 90, "y": 540, "size": 96, "arc": "half", "metric": "ram.pct", "label": "内存", "style": { "show_needle": true } },
+    { "type": "spark", "x": 250, "y": 540, "w": 240, "h": 48, "samples": 40, "metric": "net.up_mbps", "style": { "show_peak": true } },
+    { "type": "text", "x": 520, "y": 560, "size": 14, "text": "N2 新摆法：竖 progress（D3-A 箱即条） · half 仪表+指针 · spark 峰值标注" },
+    { "type": "stackbar", "x": 24, "y": 620, "w": 300, "metrics": { "metrics": ["ram.used", "ram.total"] } },
+    { "type": "stackbar", "x": 24, "y": 660, "w": 300, "metrics": { "metrics": ["ram.used", "ram.total", "misc.mobo_temp"] } },
+    { "type": "stackbar", "x": 24, "y": 700, "w": 300, "metrics": { "metrics": ["misc.mobo_temp"] } },
+    { "type": "text", "x": 420, "y": 620, "size": 14, "text": "N3：堆叠条 正常/部分缺/全缺 · 状态灯 正常/告警(≥90 复现法同上)/缺数据" },
+    { "type": "light", "x": 820, "y": 620, "metric": "cpu.usage", "label": "CPU" },
+    { "type": "light", "x": 910, "y": 620, "metric": "ram.pct", "label": "内存" },
+    { "type": "light", "x": 1000, "y": 620, "metric": "misc.mobo_temp", "label": "主板" }
   ]
 }
