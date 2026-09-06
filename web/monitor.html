@@ -205,7 +205,8 @@
     // 本文件不含任何指标清单或阈值 —— 那些都是数据。
 
     // 部件架构：每种 type 对应一个工厂 makeXxx(widget)，build 一次 DOM、
-    // 返回 update() 在每秒刷新时重绘。与 hwobs/widgets.py 的注册表以 type 为契约：
+    // 返回 { host, update }：host 是部件根节点，build 据此定位（不再反抓
+    // body 末尾），update() 在每秒刷新时重绘。与 hwobs/widgets.py 的注册表以 type 为契约：
     // 那边登记默认几何与校验，这边负责渲染；两边都不允许出现第三份遍历。
     // 新增部件 = 在 widgets.py 登记 + 在 WIDGET_TYPES 加一个工厂，两处即可。
 
@@ -223,8 +224,22 @@
 
     let HW = null;
     const byOut = new Map();  // 输出路径 -> 注册表条目
-    // spark 指标路径 -> { buf: 采样数组, sampled: 最后补样的帧号 }
-    const history = {};
+    // 单一采样器：指标路径 -> { buf, cap, sampled }。一帧每路径只补一个采样
+    // （sampled !== tickSeq 判据），容量取所有消费者声明的最大 cap；
+    // 消费方（cards 内嵌曲线 / spark / bars / HWOB.history）各自 tail 末尾 N 个。
+    const sampler = new Map();
+    function sample(path, cap) {
+      let s = sampler.get(path);
+      if (!s) { s = { buf: [], cap: 0, sampled: 0 }; sampler.set(path, s); }
+      if (cap > s.cap) s.cap = cap;
+      if (s.sampled !== tickSeq) {
+        s.sampled = tickSeq;
+        s.buf.push(HW ? dig(HW, path) : null);
+        while (s.buf.length > s.cap) s.buf.shift();
+      }
+      return s.buf;
+    }
+    const tail = (buf, n) => (buf.length > n ? buf.slice(buf.length - n) : buf);
     let instances = [];
     let tickSeq = 0;          // 每次 render() 自增：一条曲线被多张卡引用时，一帧只补一个采样
 
@@ -451,11 +466,11 @@
         states[c.key] = { el: card, value, bar, subText, spark, sparkW,
                           barMetric: c.bar, barFull: c.bar_full,
                           valueDef: c.value, subDef: c.sub, sparkMetric: c.spark };
-        if (c.spark && !history[c.spark]) history[c.spark] = { buf: [], sampled: 0 };
       }
       document.body.appendChild(grid);
 
       return {
+        host: grid,
         update() {
           for (const key of Object.keys(states)) {
             const c = states[key];
@@ -478,13 +493,9 @@
             c.el.classList.toggle('tight', probe.scrollWidth > room);
 
             if (c.sparkMetric) {
-              const s = history[c.sparkMetric];
-              if (s.sampled !== tickSeq) {   // 同一指标被多张卡引用：第二张卡直接复用本帧采样
-                s.sampled = tickSeq;
-                s.buf.push(HW ? dig(HW, c.sparkMetric) : null);
-                while (s.buf.length > HISTORY) s.buf.shift();
-              }
-              drawSpark(c.spark, s.buf, (byOut.get(c.sparkMetric) || {}).warn);
+              // 同一指标被多张卡引用时 sample() 保证一帧只补一个采样
+              drawSpark(c.spark, tail(sample(c.sparkMetric, HISTORY), HISTORY),
+                        (byOut.get(c.sparkMetric) || {}).warn);
             }
           }
         }
@@ -517,6 +528,7 @@
       document.body.appendChild(host);
 
       return {
+        host,
         update() {
           const html = [];
           for (const s of specs) {
@@ -575,6 +587,7 @@
       // 配置里就算混进了 HTML 也不会被执行（值走文本节点拼装）
       const parts = compileParts(w.text);
       return {
+        host: line,
         update() {
           line.replaceChildren(...partsToNodes(parts));
         }
@@ -589,6 +602,7 @@
       if (w.align) host.style.textAlign = w.align;
       document.body.appendChild(host);
       return {
+        host,
         update() {
           const v = HW ? dig(HW, w.metric) : null;
           const mt = meta({ metric: w.metric });
@@ -617,6 +631,7 @@
       host.appendChild(track);
       document.body.appendChild(host);
       return {
+        host,
         update() {
           const v = HW ? dig(HW, w.metric) : null;
           const mt = meta({ metric: w.metric });
@@ -645,7 +660,9 @@
 
     function makeWidgetApi(host) {
       const fns = [];
-      const series = new Map();   // path -> { path, cap, buf }
+      // path -> { path, cap, view }：view 身份稳定（脚本拿到的数组引用不变），
+      // 每帧从共享采样器取末尾 cap 个同步进来 —— 与旧双轨采样的长度语义一致。
+      const series = new Map();
       return {
         root: host,
         onTick(fn) { if (typeof fn === 'function') fns.push(fn); },
@@ -653,13 +670,14 @@
         text(path) { return txt(HW ? dig(HW, path) : null, meta({ metric: path })); },
         history(path, cap = HISTORY) {
           let s = series.get(path);
-          if (!s) { s = { path, cap: Math.max(2, cap | 0), buf: [] }; series.set(path, s); }
-          return s.buf;
+          if (!s) { s = { path, cap: Math.max(2, cap | 0), view: [] }; series.set(path, s); }
+          return s.view;
         },
         _emit() {
           for (const s of series.values()) {
-            s.buf.push(HW ? dig(HW, s.path) : null);
-            while (s.buf.length > s.cap) s.buf.shift();
+            const fresh = tail(sample(s.path, s.cap), s.cap);
+            s.view.length = 0;
+            for (const v of fresh) s.view.push(v);
           }
           for (const fn of fns) {
             try { fn(HW); } catch (e) { console.warn('HWOB onTick:', e); }
@@ -685,6 +703,7 @@
       if (!/<script/i.test(src)) {
         // 静态片段：每秒整段重替换（没有脚本，重建无副作用）
         return {
+          host,
           update() { host.innerHTML = substituteRefs(src); },
         };
       }
@@ -699,6 +718,7 @@
         old.replaceWith(s);
       }
       return {
+        host,
         update() { api._emit(); },
       };
     }
@@ -750,6 +770,7 @@
       }
       document.body.appendChild(host);
       return {
+        host,
         update() {
           const v = HW ? dig(HW, w.metric) : null;
           const mt = meta({ metric: w.metric });
@@ -793,16 +814,11 @@
       document.body.appendChild(host);
       const ctx = cv.getContext('2d');
       ctx.scale(dpr, dpr);
-      if (!history[w.metric]) history[w.metric] = { buf: [], sampled: 0 };
       return {
+        host,
         update() {
-          const s = history[w.metric];
-          if (s.sampled !== tickSeq) {
-            s.sampled = tickSeq;
-            s.buf.push(HW ? dig(HW, w.metric) : null);
-            while (s.buf.length > samples) s.buf.shift();
-          }
-          drawSparkArea(cv, W, H, s.buf, (byOut.get(w.metric) || {}).warn, fill);
+          drawSparkArea(cv, W, H, tail(sample(w.metric, samples), samples),
+                        (byOut.get(w.metric) || {}).warn, fill);
         },
       };
     }
@@ -887,16 +903,11 @@
       document.body.appendChild(host);
       const ctx = cv.getContext('2d');
       ctx.scale(dpr, dpr);
-      if (!history[w.metric]) history[w.metric] = { buf: [], sampled: 0 };
       return {
+        host,
         update() {
-          const s = history[w.metric];
-          if (s.sampled !== tickSeq) {
-            s.sampled = tickSeq;
-            s.buf.push(HW ? dig(HW, w.metric) : null);
-            while (s.buf.length > samples) s.buf.shift();
-          }
-          drawSparkBars(cv, W, H, s.buf, (byOut.get(w.metric) || {}).warn);
+          drawSparkBars(cv, W, H, tail(sample(w.metric, samples), samples),
+                        (byOut.get(w.metric) || {}).warn);
         },
       };
     }
@@ -916,7 +927,7 @@
           (typeof bg.border_color === 'string' && bg.border_color ? bg.border_color : 'rgba(255,255,255,0.10)');
       }
       document.body.appendChild(host);
-      return { update() {} };
+      return { host, update() {} };
     }
 
     // --- value：数值组原子件（自由画布） -------------------------------------------
@@ -934,6 +945,7 @@
       const refsList = (def.metrics || []).map(asRef);
       const sep = def.sep || ' · ';
       return {
+        host,
         update() {
           const nodes = [];
           refsList.forEach((o, i) => {
@@ -1007,7 +1019,7 @@
       svg.innerHTML = ICON_PATHS[w.name] || ICON_PATHS.pulse;
       host.appendChild(svg);
       document.body.appendChild(host);
-      return { update() {} };
+      return { host, update() {} };
     }
 
     // --- image：URL 图片原子件（cover/contain/fill；没 URL 时画虚线占位） ---------
@@ -1025,7 +1037,7 @@
         host.appendChild(el('div', 'img-empty', [text('IMG')]));
       }
       document.body.appendChild(host);
-      return { update() {} };
+      return { host, update() {} };
     }
 
     // --- divider：分隔线原子件（横线高=thickness、竖线宽=thickness，长度走几何） ---
@@ -1036,7 +1048,7 @@
       if (w.vertical) host.style.width = th + 'px';
       else host.style.height = th + 'px';
       document.body.appendChild(host);
-      return { update() {} };
+      return { host, update() {} };
     }
 
     // --- badge：药丸徽章原子件（{路径} 插值同 text；底色/描边走外观 bg） ----------
@@ -1048,6 +1060,7 @@
       document.body.appendChild(host);
       const parts = compileParts(w.text);
       return {
+        host,
         update() {
           host.replaceChildren(...partsToNodes(parts));
         }
@@ -1071,12 +1084,13 @@
       (layout.widgets || []).forEach((w, i) => {
         const make = WIDGET_TYPES[w.type];
         if (!make) { console.warn('未知部件类型：' + w.type); return; }
-        instances.push(make(w));
-        // 各工厂都把根节点 append 到 body 末尾，拿出来打样式与定位。
+        const inst = make(w);
+        instances.push(inst);
+        // 宿主从工厂返回值拿；工厂自己把根节点 append 到 body 末尾，顺序语义不变。
         // cards/chips/text 没写 w 时从 x 拉到右缘（通栏，和流式的观感衔接）；
         // margin_top 已折算进 y，这里清零避免双重偏移。
         // data-wi = 部件在数组里的下标，编辑器靠它直接改宿主样式做拖拽跟手。
-        const host = document.body.lastElementChild;
+        const host = inst.host;
         applyStyle(host, w);
         // 统一 Node 公共字段：visible=false 整个不画；rotation 绕部件中心旋转。
         // 每次预览推送都全量重建，不会残留上一份的变换。
