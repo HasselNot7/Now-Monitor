@@ -81,5 +81,26 @@ input[type="number"] {
   }
 }
 
+/* U3 图层树拖拽指示（EditorPage 拖拽中 DOM 直改，drop/取消统一清）：
+   插入横线 + 入组高亮。颜色取主色 #3884ff（与画布选中框同族）。 */
+.tree-dnd-line {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  border-radius: 1px;
+  background: #3884ff;
+  box-shadow: 0 0 0 1px rgba(56, 132, 255, 0.35);
+  pointer-events: none;
+  z-index: 50;
+  display: none;
+}
+.tree-dnd-line.show {
+  display: block;
+}
+.tree-dnd-into {
+  background: rgba(56, 132, 255, 0.18) !important;
+}
+
 /* Tailwind v4 里挂 NP 的 tailwind.config.js（HeroUI v2 主题插件 + 色板 + 字体） */
 @config "../tailwind.config.js"

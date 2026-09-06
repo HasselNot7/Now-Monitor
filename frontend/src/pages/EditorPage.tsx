@@ -1827,24 +1827,34 @@ export default function EditorPage({ shared }: { shared: Shared }) {
 
   // U3 图层树拖拽：pending 位移 >4px 激活（保住点击选中语义）；mousemove 幂等重设
   // 指示器；松手按最后合法目标落盘（一次 pushHistory），非法/无目标零反馈纯清理。
+  // 处理器一律经 treeDndRef 取最新渲染版本 —— effect 只注册一次，若闭包捕获首帧
+  // commitTreeDrop，其内 onChange 是 cfg=null 的旧闭包（早退），草稿改了但不落盘。
+  const treeDndRef = useRef<{
+    cache: () => void;
+    update: (x: number, y: number) => void;
+    commit: (d: { srcs: number[]; path?: string; startX: number; startY: number; active: boolean }) => void;
+    clear: () => void;
+  } | null>(null);
+  treeDndRef.current = { cache: cacheTreeRows, update: updateTreeDropIndicator, commit: commitTreeDrop, clear: clearTreeDnd };
   useEffect(() => {
     const move = (e: MouseEvent) => {
+      const h = treeDndRef.current;
       const d = treeDragRef.current;
-      if (!d) return;
+      if (!h || !d) return;
       if (!d.active) {
         if (Math.abs(e.clientX - d.startX) < 4 && Math.abs(e.clientY - d.startY) < 4) return;
         d.active = true;
         setTreeDragging({ srcs: d.srcs, path: d.path });
-        cacheTreeRows();
+        h.cache();
         document.body.style.cursor = "grabbing";
       }
-      updateTreeDropIndicator(e.clientX, e.clientY);
+      h.update(e.clientX, e.clientY);
     };
     const up = () => {
       const d = treeDragRef.current;
       if (!d) return;
       treeDragRef.current = null;
-      try { if (d.active) commitTreeDrop(d); } finally { clearTreeDnd(); }
+      try { if (d.active) treeDndRef.current?.commit(d); } finally { treeDndRef.current?.clear(); }
     };
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
@@ -1852,7 +1862,6 @@ export default function EditorPage({ shared }: { shared: Shared }) {
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 拖动：iframe 宿主节点 + 手柄盒都直改 DOM（不重渲染），松手才进草稿。
@@ -2361,7 +2370,7 @@ export default function EditorPage({ shared }: { shared: Shared }) {
             if (spaceRef.current) return;
             if (e.shiftKey || e.ctrlKey || e.metaKey) selectWidget(i, true);
             else selectSingle(i);
-            // treeDragPending(e, [i]);   // U3 暂停：恢复 U3 时取消本行注释
+            if (!(w as NodeBase).locked) treeDragPending(e, [i]);   // locked 行不可动（画布同语义）
           }}
           onContextMenu={e => openCtx(e, "widget", i)}>
           <Icon size={17} strokeWidth={1.8} className={`shrink-0 ${w.visible === false ? "opacity-30" : "opacity-70"}`} />
@@ -2414,7 +2423,8 @@ export default function EditorPage({ shared }: { shared: Shared }) {
             setMulti(members);
             setSelected(members[members.length - 1]);
             setSelPrompt(false);
-            // treeDragPending(e, members, p);   // U3 暂停：恢复 U3 时取消本行注释
+            // 含 locked 成员的组不可整树拖动（搬块会连带锁件 z 序）
+            if (!members.some(j => (draft.widgets[j] as NodeBase).locked)) treeDragPending(e, members, p);
           }}
           onContextMenu={e => openCtx(e, "widget", members[members.length - 1])}>
           <button type="button" title={open ? "收起" : "展开"}
@@ -2564,13 +2574,14 @@ export default function EditorPage({ shared }: { shared: Shared }) {
               </button>
             </div>
           )}
-          <div className="min-h-0 flex-1 overflow-y-auto pb-2">
+          <div ref={treeContRef} className="relative min-h-0 flex-1 overflow-y-auto pb-2">
             {draft.widgets.length === 0 && !draft.prompt && (
               <Hint className="px-2 py-1 text-xs">还没有部件 —— 用下面的「添加部件」。</Hint>
             )}
             {layerTree.map(node => renderLayerNode(node, 0))}
             {draft.prompt && (
               <div
+                data-tree-row="prompt"
                 className={`group flex h-11 cursor-default items-center gap-3 rounded-xl px-3 text-[15px] transition-colors duration-150 ${
                   selPrompt ? "bg-[#2a2a2e] text-foreground" : "text-default-500 hover:bg-white/[0.04] hover:text-foreground"}`}
                 onMouseDown={() => { if (!spaceRef.current) { setSelected(null); setSelPrompt(true); } }}
@@ -2582,6 +2593,9 @@ export default function EditorPage({ shared }: { shared: Shared }) {
                   onMouseDown={e => e.stopPropagation()} onClick={removePrompt}><Trash2 size={14} /></button>
               </div>
             )}
+            {/* U3 拖拽插入横线指示：style/class 由 mousemove 幂等直改、drop/取消统一清，
+                React 重渲染不接管这两个属性 → 无残影 */}
+            <div ref={dndLineRef} className="tree-dnd-line" />
           </div>
           {/* 添加部件：NP「更多」式的大药丸，菜单浮在其上方 */}
           <div className="relative p-1">
