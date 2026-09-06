@@ -1,7 +1,7 @@
 // --- spark：独立迷你曲线（canvas 面积图，窗口内峰值定标） ----------------------
 // 颜色跟随主题/style（--bar-fill / --bar-high），每秒从画布上的计算样式现读，
 // 主题切色不用重建部件。fill=false 时只描线不填充。
-import { el, state, sample, tail, cssVar, isHigh } from '../core.js';
+import { el, state, sample, tail, cssVar, isHigh, makeTween } from '../core.js';
 
 export function makeSpark(w) {
   const W = Math.max(40, w.w ?? 120);
@@ -21,11 +21,12 @@ export function makeSpark(w) {
   document.body.appendChild(host);
   const ctx = cv.getContext('2d');
   ctx.scale(dpr, dpr);
+  const tween = makeTween('spark:' + w.metric);
   return {
     host,
     update() {
-      drawSparkArea(cv, W, H, tail(sample(w.metric, samples), samples),
-                    (state.byOut.get(w.metric) || {}).warn, fill);
+      tween.render(tail(sample(w.metric, samples), samples), hist =>
+        drawSparkArea(cv, W, H, hist, (state.byOut.get(w.metric) || {}).warn, fill));
     },
   };
 }

@@ -56,6 +56,53 @@ export function sample(path, cap) {
 }
 export const tail = (buf, n) => (buf.length > n ? buf.slice(buf.length - n) : buf);
 
+// --- canvas 部件的帧间缓动（spark / bars 共用） ------------------------------
+// 时长与壳 CSS 的 --anim-ms（monitor.html :root）同源口径：400ms，改必同改。
+export const ANIM_MS = 400;
+
+// 种子表：kind:path -> 该路径上一实例最后画到的显示值。仅在新实例初始化时拷贝
+// 一份当起点（preview 重建从这里续接，不闪回）；运行中的显示数组按实例私有，
+// 同 path 双实例各画各的，不会互踩。
+const shownSeeds = new Map();
+
+// 每 tick 调一次 render(target, draw)：以实例当前的显示值为起点向 target 缓动
+// （easeOutCubic），rAF 节流 ≥40ms/帧（≤25fps 红线），窗口外完全停表。
+// 变长的新槽立即到位（与卡片 DOM 新 <i> 一致），变短截断；null 不插值直接跳
+// （保住 spark 断线 / bars 空槽语义，缺失数据不画假值）。
+export function makeTween(key) {
+  const shown = (shownSeeds.get(key) || []).slice();
+  let raf = 0;
+  return {
+    render(target, draw) {
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      const from = shown.slice();
+      if (from.length === target.length && from.every((v, i) => v === target[i])) {
+        draw(shown);                                   // 静止：一帧走人，零 rAF
+        return;
+      }
+      const t0 = performance.now();
+      let last = -Infinity;
+      const step = now => {
+        const p = Math.min(1, (now - t0) / ANIM_MS);
+        if (p < 1 && now - last < 40) { raf = requestAnimationFrame(step); return; }
+        last = now;
+        const e = 1 - (1 - p) ** 3;                    // easeOutCubic
+        for (let i = 0; i < target.length; i++) {
+          const to = target[i];
+          const fr = i < from.length ? from[i] : to;
+          shown[i] = (fr == null || to == null) ? to : fr + (to - fr) * e;
+        }
+        shown.length = target.length;
+        shownSeeds.set(key, shown.slice());
+        draw(shown);
+        // 实例被重建丢弃时，旧循环最多再跑一个窗口且画在已摘除的 canvas 上，无观察副作用
+        raf = p < 1 ? requestAnimationFrame(step) : 0;
+      };
+      step(performance.now());                         // 首帧立即，其余交给 rAF
+    },
+  };
+}
+
 export const dig = (obj, path) => path.split('.').reduce((n, k) => (n == null ? null : n[k]), obj);
 export const asRef = r => (typeof r === 'string' ? { metric: r } : r);
 
