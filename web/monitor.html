@@ -27,6 +27,10 @@
 
       /* 圆环仪表：直径按部件 size 由 JS 覆盖，这里给默认值供静态引用 */
       --gauge-size: 120px;
+
+      /* 全局动画口径（毫秒）：数值条/曲线/圆环的过渡时长单点。
+         canvas 侧的 ANIM_MS（web/overlay/core.js）与此同值，改必同改。 */
+      --anim-ms: 400ms;
     }
 
     * {
@@ -96,9 +100,9 @@
 
     .free-stat { font-weight: 700; white-space: nowrap; }
     .free-stat .tmiss { color: var(--subtext-color); }
-    .free-progress .fp-track { background: var(--bar-bg); border-radius: 4px; overflow: hidden; }
-    .free-progress .fp-fill { height: 100%; width: 0%; background: var(--bar-fill); }
-    .free-progress.high .fp-fill { background: var(--bar-high); }
+    /* 原子件进度条直接复用卡片的 .progress-track/.progress-fill（动画与告警色同源）；
+       圆角默认 4px 由工厂内联写死保底（卡片类的 2px 默认不动） */
+    .free-progress.high .progress-fill { background: var(--bar-high); }
     .free-html { line-height: 1.3; }
     .free-html .tmiss { color: var(--subtext-color); }
     .free-gauge { text-align: center; }
@@ -108,6 +112,9 @@
       display: flex; align-items: center; justify-content: center;
       font-weight: 700; color: var(--text-color);
     }
+    /* 圆环数值与告警色平滑过渡：dashoffset 走 update() 的 setAttribute，
+       stroke 走 .high 类切换 —— CSS transition 对两者都生效（实测） */
+    .gauge-arc { transition: stroke-dashoffset var(--anim-ms) ease, stroke var(--anim-ms) ease; }
     .free-gauge.high .gauge-arc { stroke: var(--bar-high) !important; }
     .free-gauge .gauge-label { display: block; margin-top: 4px; font-size: 12px; line-height: 16px; color: var(--dim-color); }
 
@@ -134,7 +141,7 @@
       height: 100%;
       width: 0%;
       background-color: var(--bar-fill);
-      transition: width 0.4s ease, background-color 0.4s ease;
+      transition: width var(--anim-ms) ease, background-color var(--anim-ms) ease;
     }
 
     .metric-sub {
@@ -160,7 +167,7 @@
       background-color: var(--bar-bg);
       padding: 1px;
     }
-    .spark i { flex: 1; min-height: 1px; background-color: var(--bar-fill); transition: height 0.3s ease; }
+    .spark i { flex: 1; min-height: 1px; background-color: var(--bar-fill); transition: height var(--anim-ms) ease; }
 
     .chips { display: flex; justify-content: space-between; gap: 18px; margin-top: 10px; font-size: 15px; }
     .chips.dense { font-size: 13px; gap: 10px; }
