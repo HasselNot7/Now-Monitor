@@ -1,0 +1,72 @@
+{
+  "version": 2,
+  "name": "widget-gallery",
+  "canvas": { "w": 1600, "h": 500, "mode": "free", "theme": "nord-console" },
+  "prompt": {
+    "user": "gallery",
+    "cmd": "./now-monitor --widgets=15",
+    "cursor": true,
+    "size": 19,
+    "x": 24,
+    "y": 16
+  },
+  "widgets": [
+    {
+      "type": "cards",
+      "x": 24, "y": 70, "w": 680, "cols": 2, "gap": 24,
+      "items": [
+        {
+          "key": "cpu", "label": "CPU",
+          "bar": "cpu.usage",
+          "value": [{ "metric": "cpu.usage" }],
+          "sub": [{ "metric": "cpu.power_w" }, { "metric": "cpu.clock_mhz" }],
+          "spark": "cpu.usage"
+        },
+        {
+          "key": "ram", "label": "内存",
+          "bar": "ram.pct",
+          "value": [{ "metric": "ram.pct" }],
+          "sub": [{ "metric": "ram.used" }, { "metric": "ram.total" }],
+          "spark": "net.down_mbps"
+        }
+      ]
+    },
+    {
+      "type": "chips",
+      "x": 24, "y": 266, "w": 680, "fit": "shrink",
+      "items": ["net.up_mbps", "net.down_mbps", "ram.pct", "misc.dimm_max"]
+    },
+    {
+      "type": "panel",
+      "x": 760, "y": 70, "w": 340, "h": 110,
+      "style": { "bg": { "color": "#3b4252", "alpha": 60, "radius": 14, "border": 1 } }
+    },
+    {
+      "type": "value",
+      "x": 784, "y": 104, "w": 300, "size": 19, "show_name": true,
+      "metrics": { "digits": 1, "metrics": [{ "metric": "cpu.power_w" }, { "metric": "cpu.clock_mhz" }] }
+    },
+    { "type": "icon", "x": 1140, "y": 90, "size": 36, "name": "cpu" },
+    { "type": "image", "x": 1200, "y": 70, "w": 120, "h": 80 },
+    { "type": "gauge", "x": 1360, "y": 70, "size": 96, "metric": "cpu.usage", "label": "CPU" },
+    { "type": "stat", "x": 760, "y": 200, "size": 26, "metric": "ram.pct", "label": "内存" },
+    {
+      "type": "progress",
+      "x": 24, "y": 330, "w": 300, "metric": "ram.pct"
+    },
+    { "type": "spark", "x": 360, "y": 320, "w": 240, "h": 48, "samples": 40, "metric": "net.down_mbps" },
+    { "type": "bars", "x": 630, "y": 320, "w": 240, "h": 48, "samples": 40, "metric": "cpu.usage" },
+    {
+      "type": "text",
+      "x": 900, "y": 330, "size": 19,
+      "text": "文字插值：内存 {ram.pct} · 下行 {net.down_mbps}"
+    },
+    { "type": "html", "x": 900, "y": 372, "w": 320, "h": 28, "html": "静态 HTML · {time}" },
+    { "type": "divider", "x": 24, "y": 396, "w": 280, "thickness": 3 },
+    {
+      "type": "badge",
+      "x": 24, "y": 430, "size": 15,
+      "text": "注册但缺传感器（tmiss 演示）：{misc.mobo_temp}"
+    }
+  ]
+}
