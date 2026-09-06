@@ -13,7 +13,8 @@ export default defineConfig({
     proxy: {
       "/api": BACKEND,
       "/hw.json": BACKEND,
-      "/overlay.json": BACKEND,
+      "/overlay": BACKEND,   // 叠加层运行时模块（monitor.html 壳引用 /overlay/main.js）；
+                             // 前缀也盖住 /overlay.json，上面那条保留作显式声明
       "/metrics.json": BACKEND,
       "/sensors": BACKEND,
       // 编辑器预览 iframe 的同源入口：/preview?preview=1 → 后端的 /。
