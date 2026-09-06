@@ -49,6 +49,18 @@ export const TF = ({ className = "", placeholder, title, onChange, onBlur, ...pr
   return title ? <span title={title} className="inline-flex">{f}</span> : f;
 };
 
+/** F3② 前缀/后缀提交契约：只认两个转义 —— 字面 \n 转真换行、\\ 转反斜杠
+ *（单趟从左到右，\\n = 反斜杠+n 而非换行）。数据里存真换行符，渲染端不做
+ * 任何转义解析 —— overlay.json 保持纯 JSON 可手改。 */
+const unesc = (s: string) => s.replace(/\\n|\\\\/g, m => (m === "\\n" ? "\n" : "\\"));
+/** unesc 的逆：真换行/反斜杠转回字面 \n、\\ 供单行输入框显示 —— 单行 input 的
+ * value 会被浏览器吃掉换行，defaultValue 直接塞真 \n 会在面板打开时把数据洗掉。
+ * 输入框域 = 转义形态，数据域 = 真换行，转换只发生在提交。 */
+const esc = (s: string) => s.replace(/\\/g, "\\\\").replace(/\n/g, "\\n");
+/** F3③ 不 trim：首尾空格是合法内容（" GB" 就是要渲染成 "42 GB"）；
+ * 纯空白只当「未填写」→ 删键回默认。组名重命名的 trim 语义不在此列。 */
+const orUndef = (s: string) => (/^\s*$/.test(s) ? undefined : s);
+
 /** 多行版（自定义 HTML 编辑器用）。rows 是原生 textarea 属性。 */
 export const TFArea = ({ className = "", rows, placeholder, onChange, ...props }:
   TFProps & { rows?: number }) => (
@@ -193,20 +205,33 @@ function SlotRow({ arr, i, total, unitAll, allowLabel, metrics, onChange, rebuil
   const verticalSub = compact && allowLabel;
 
   if (typeof item === "string") {
+    // 裸字符串条目填了前/后缀才升级成对象形态；升级后下一次渲染就走对象分支，
+    // 删键回默认由对象分支负责（这里空输入 = 无事发生）。
+    const commitStr = (key: "label" | "suffix", raw: string) => {
+      const v = orUndef(unesc(raw));
+      if (v === undefined) return;
+      arr[i] = { metric: arr[i] as string, [key]: v };
+      rebuild(); onChange();
+    };
     const prefix = (
       <TF
-        aria-label="前缀文字" placeholder="前缀（可空）"
+        aria-label="前缀文字" placeholder="前缀（可空 · \n 换行）"
         className="min-w-0 flex-1 font-poppins" title="直播时显示在这个值前面"
-        onBlur={e => {
-          if (e.target.value) { arr[i] = { metric: arr[i] as string, label: e.target.value }; rebuild(); onChange(); }
-        }}
+        onBlur={e => commitStr("label", e.target.value)}
+      />
+    );
+    const suffix = (
+      <TF
+        aria-label="后缀文字" placeholder="后缀（可空 · \n 换行）"
+        className="min-w-0 flex-1 font-poppins" title="数值后面显示的内容"
+        onBlur={e => commitStr("suffix", e.target.value)}
       />
     );
     if (verticalSub) {
       return (
         <div className="flex flex-col gap-1.5">
           {metricSel}
-          <div className="flex items-center gap-2">{prefix}{del}</div>
+          <div className="flex items-center gap-2">{prefix}{suffix}{del}</div>
         </div>
       );
     }
@@ -215,6 +240,7 @@ function SlotRow({ arr, i, total, unitAll, allowLabel, metrics, onChange, rebuil
         <div className="min-w-0 flex-1">{metricSel}</div>
         {!allowLabel && unitSwitch}
         {allowLabel && prefix}
+        {allowLabel && suffix}
         {del}
       </div>
     );
@@ -222,17 +248,27 @@ function SlotRow({ arr, i, total, unitAll, allowLabel, metrics, onChange, rebuil
   if (item && "metric" in item && item.metric) {
     const prefix = (
       <TF
-        aria-label="前缀文字" placeholder="前缀（可空）"
-        className="min-w-0 flex-1 font-poppins" title="直播时显示在这个值前面"
-        defaultValue={item.label ?? ""}
-        onChange={v => { item.label = v || undefined; onChange(); }}
+        aria-label="前缀文字" placeholder="前缀（可空 · \n 换行）"
+        className="min-w-0 flex-1 font-poppins"
+        title={item.label ?? "直播时显示在这个值前面"}
+        defaultValue={item.label != null ? esc(item.label) : ""}
+        onChange={v => { item.label = orUndef(unesc(v)); onChange(); }}
+      />
+    );
+    const suffix = (
+      <TF
+        aria-label="后缀文字" placeholder="后缀（可空 · \n 换行）"
+        className="min-w-0 flex-1 font-poppins"
+        title={item.suffix ?? "数值后面显示的内容"}
+        defaultValue={item.suffix != null ? esc(item.suffix) : ""}
+        onChange={v => { item.suffix = orUndef(unesc(v)); onChange(); }}
       />
     );
     if (verticalSub) {
       return (
         <div className="flex flex-col gap-1.5">
           {metricSel}
-          <div className="flex items-center gap-2">{prefix}{del}</div>
+          <div className="flex items-center gap-2">{prefix}{suffix}{del}</div>
         </div>
       );
     }
@@ -241,6 +277,7 @@ function SlotRow({ arr, i, total, unitAll, allowLabel, metrics, onChange, rebuil
         <div className="min-w-0 flex-1">{metricSel}</div>
         {!allowLabel && unitSwitch}
         {allowLabel && prefix}
+        {allowLabel && suffix}
         {del}
       </div>
     );
@@ -289,8 +326,18 @@ function SlotRow({ arr, i, total, unitAll, allowLabel, metrics, onChange, rebuil
             <label className="flex items-center gap-1.5 text-xs text-default-500">
               前缀
               <TF aria-label="前缀" className="w-24 font-poppins"
-                defaultValue={item.label ?? ""}
-                onBlur={e => { item.label = e.target.value || undefined; onChange(); }} />
+                title={item.label ?? "前缀（\\n 换行）"}
+                defaultValue={item.label != null ? esc(item.label) : ""}
+                onBlur={e => { item.label = orUndef(unesc(e.target.value)); onChange(); }} />
+            </label>
+          )}
+          {allowLabel && (
+            <label className="flex items-center gap-1.5 text-xs text-default-500">
+              后缀
+              <TF aria-label="后缀" className="w-24 font-poppins"
+                title={item.suffix ?? "后缀（\\n 换行）"}
+                defaultValue={item.suffix != null ? esc(item.suffix) : ""}
+                onBlur={e => { item.suffix = orUndef(unesc(e.target.value)); onChange(); }} />
             </label>
           )}
           {!allowLabel && unitSwitch}

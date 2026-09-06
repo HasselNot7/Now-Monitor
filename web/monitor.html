@@ -127,7 +127,8 @@
     }
     .metric-header { display: flex; justify-content: space-between; font-size: 17px; font-weight: bold; }
     .metric-label { color: var(--label-color); }
-    .metric-value { color: var(--text-color); }
+    /* F3：前缀/数值/后缀同一段文本 —— pre-wrap 保住 \n 换行与首尾空格 */
+    .metric-value { color: var(--text-color); white-space: pre-wrap; }
 
     .progress-bar-container { display: flex; align-items: center; gap: 8px; font-size: 15px; }
     .progress-track {
@@ -155,7 +156,8 @@
       overflow: hidden;
     }
     /* span 必须是滚动容器，否则 scrollWidth 恒等于 clientWidth，测不出真实内容宽度 */
-    .metric-sub > span { overflow: hidden; }
+    /* F3：小字槽同样承载 前缀+数值+后缀 —— pre-wrap 保换行与首尾空格 */
+    .metric-sub > span { overflow: hidden; white-space: pre-wrap; }
     /* 值变宽时（显存 10.0GB、核心 2000MHz）降一号，宁可小一点也不越界压到相邻卡片 */
     .metric-card.tight .metric-sub { font-size: 12.5px; }
 
@@ -182,7 +184,9 @@
     .text-line .tmiss { color: var(--subtext-color); }
 
     .free-value { white-space: nowrap; overflow: hidden; }
-    .free-value .vn { color: var(--label-color); }
+    /* F3：.vn 前缀、.vs 后缀 —— pre-wrap 保住 \n 换行与首尾空格（数值 .vv 不受波及） */
+    .free-value .vn { color: var(--label-color); white-space: pre-wrap; }
+    .free-value .vs { color: var(--text-color); white-space: pre-wrap; }
     .free-value .vv { color: var(--text-color); }
     .free-value .vwarn { color: var(--bar-high); }
     .free-value .tmiss { color: var(--subtext-color); }

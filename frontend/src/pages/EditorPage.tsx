@@ -196,8 +196,12 @@ const zoomStep = (from: number, dir: 1 | -1) => {
   return [...ZOOM_STEPS].reverse().find(s => s < from - 0.001) ?? MIN_ZOOM;
 };
 
-/** 图层面板里显示的人话名字 */
+/** 图层面板里显示的人话名字。自定义显示名（树内改名写入的 w.label）优先；
+ * stat/gauge/light 的 label 画布本来就渲染（同一字段两个用途），其余类型
+ * 渲染器不读它 —— 纯编辑器层显示名，overlay.json 里就是个宽容的未知键。 */
 function layerName(w: Widget, labelOf: (t: string) => string): string {
+  const own = (w as { label?: string }).label;
+  if (typeof own === "string" && own.trim()) return own.trim();
   switch (w.type) {
     case "cards": return `${labelOf("cards")} · ${(w as CardsWidget).items?.length ?? 0} 张`;
     case "chips": return `${labelOf("chips")} · ${(w as ChipsWidget).items?.length ?? 0} 项`;
@@ -363,8 +367,10 @@ export default function EditorPage({ shared }: { shared: Shared }) {
   const [layersOpen, setLayersOpen] = useState(() => localStorage.getItem("hwobs.editorLayers") !== "0");
   /** 图层树里收起的组路径（默认全展开） */
   const [closedGrp, setClosedGrp] = useState<Set<string>>(new Set());
-  /** 正在重命名的组（路径 + 输入框内容） */
-  const [renaming, setRenaming] = useState<{ path: string; v: string } | null>(null);
+  /** 进行中的原地重命名：组（路径）或叶子（下标）二选一 + 输入框内容 */
+  const [renaming, setRenaming] = useState<{ path?: string; leaf?: number; v: string } | null>(null);
+  /** 拖拽落点后浏览器还会补发一次 click —— 用它抑制「拖完误触发点行名开重命名」。 */
+  const treeJustDraggedRef = useRef(false);
   const [selected, setSelected] = useState<number | null>(null);
   /** 多选集合（含 selected 本身；单选时 = [selected]）。成组组件整组选中、
    * Shift/Ctrl 加减选、画布框选都落在这里；拖动/复制/删除/对齐按它整体作用。 */
@@ -758,13 +764,20 @@ export default function EditorPage({ shared }: { shared: Shared }) {
     setRects(newRects);
     setSelected(prev => (prev != null ? map.get(prev) ?? null : prev));
     setMulti(prev => prev.map(i => map.get(i) ?? i));
+    // 重命名目标跟着迁移（纪律③）：拖的正是重命名中的叶子 → 取消重命名；
+    // 别人挪位导致下标平移 → 名字跟着改指新下标。
+    if (renaming && renaming.leaf != null) {
+      if (d.srcs.includes(renaming.leaf)) setRenaming(null);
+      else if (map.has(renaming.leaf)) setRenaming({ ...renaming, leaf: map.get(renaming.leaf)! });
+    }
     if (spec.kind === "into" && d.path != null) {
       const P = d.path, T = spec.path;
       if (closedGrp.size) {
         setClosedGrp(new Set([...closedGrp].map(p =>
           p === P || p.startsWith(P + "/") ? T + p.slice(P.length) : p)));
       }
-      if (renaming && (renaming.path === P || renaming.path.startsWith(P + "/"))) setRenaming(null);
+      if (renaming && renaming.path != null &&
+        (renaming.path === P || renaming.path.startsWith(P + "/"))) setRenaming(null);
       if (grpEnteredRef.current === P || grpEnteredRef.current.startsWith(P + "/")) enterGrp("");
     }
     setDraft({ ...dd });
@@ -1289,29 +1302,57 @@ export default function EditorPage({ shared }: { shared: Shared }) {
     toast.success(`已插入组件「${c.name}」`, { timeout: 2000 });
   };
 
-  /** 多选对齐：以渲染后的真实几何为准（rects），把每个部件的 x/y 吸到公共边 */
+  /** 多选对齐（G 重做）：
+   * ① 位置一律取草稿 —— free 模式下回报盒的 x/y 本来就是草稿 x/y，但草稿永远
+   *   最新；旧实现读 rects 的 x/y，拖拽/微调/缩放刚松手时回报未及到达，用的
+   *   是上一帧坐标 → 对齐把件"飞回"旧位置、越对越歪。尺寸仍取 rects（渲染真值）。
+   * ② 旋转件按旋转后的视觉包围盒算公共边 —— 回报盒是旋转前的 offset 布局盒，
+   *   按它对齐，旋转件视觉边缘永远对不齐（角度越大偏得越狠）。写回保持中心：
+   *   新 x = 目标视觉边 ± 视觉半宽 − 布局半宽。未旋转件 vw/vh 恒等于 r.w/r.h，
+   *   公式退化为原式（浮点上也是精确往返），零回归。
+   * ④ 落位后乐观更新 rects —— 手柄盒与连点下一次对齐都不必等 iframe 回报。 */
   const alignSel = (mode: "left" | "cx" | "right" | "top" | "cy" | "bottom") => {
     const d = draftRef.current;
     if (!d || multi.length < 2) return;
-    // 锁定件不参与对齐
-    const rs = multi.map(i => ({ i, r: rectsRef.current[i] }))
-      .filter(x => x.r && !(d.widgets[x.i] as NodeBase)?.locked);
-    if (rs.length < 2) return;
+    // 锁定件不参与对齐；隐藏件（rect null，量不出尺寸）同样排除
+    const parts = multi.map(i => {
+      const w = d.widgets[i] as FreePos & NodeBase;
+      const r = rectsRef.current[i];
+      return { i, w, r };
+    }).filter(x => x.r && !x.w.locked);
+    if (parts.length < 2) return;
+    // 旋转后的视觉包围盒：中心不变，宽高按 |cos|/|sin| 混合
+    const box = (w: FreePos & NodeBase, r: Rect) => {
+      const rad = ((w.rotation || 0) * Math.PI) / 180;
+      const c = Math.abs(Math.cos(rad)), s = Math.abs(Math.sin(rad));
+      return {
+        cx: (w.x ?? 0) + r.w / 2, cy: (w.y ?? 0) + r.h / 2,
+        vw: c * r.w + s * r.h, vh: s * r.w + c * r.h,
+      };
+    };
+    const bs = parts.map(p => box(p.w, p.r!));
+    const minX = Math.min(...bs.map(b => b.cx - b.vw / 2));
+    const maxX = Math.max(...bs.map(b => b.cx + b.vw / 2));
+    const minY = Math.min(...bs.map(b => b.cy - b.vh / 2));
+    const maxY = Math.max(...bs.map(b => b.cy + b.vh / 2));
     pushHistory();
-    const minX = Math.min(...rs.map(x => x.r!.x));
-    const maxX = Math.max(...rs.map(x => x.r!.x + x.r!.w));
-    const minY = Math.min(...rs.map(x => x.r!.y));
-    const maxY = Math.max(...rs.map(x => x.r!.y + x.r!.h));
-    for (const { i, r } of rs) {
-      const w = d.widgets[i] as FreePos;
-      if (mode === "left") w.x = minX;
-      if (mode === "right") w.x = maxX - r!.w;
-      if (mode === "cx") w.x = Math.round((minX + maxX) / 2 - r!.w / 2);
-      if (mode === "top") w.y = minY;
-      if (mode === "bottom") w.y = maxY - r!.h;
-      if (mode === "cy") w.y = Math.round((minY + maxY) / 2 - r!.h / 2);
+    const next = rectsRef.current.slice();
+    for (let k = 0; k < parts.length; k++) {
+      const { i, w, r } = parts[k];
+      const b = bs[k];
+      let cx = b.cx, cy = b.cy;
+      if (mode === "left") cx = minX + b.vw / 2;
+      if (mode === "right") cx = maxX - b.vw / 2;
+      if (mode === "cx") cx = (minX + maxX) / 2;
+      if (mode === "top") cy = minY + b.vh / 2;
+      if (mode === "bottom") cy = maxY - b.vh / 2;
+      if (mode === "cy") cy = (minY + maxY) / 2;
+      w.x = Math.round(cx - r!.w / 2);
+      w.y = Math.round(cy - r!.h / 2);
+      next[i] = { x: w.x, y: w.y, w: r!.w, h: r!.h };
     }
     setDraft({ ...d });
+    setRects(next);
     onChange();
   };
 
@@ -1548,18 +1589,34 @@ export default function EditorPage({ shared }: { shared: Shared }) {
     setSelected(i);
   };
 
-  /** 提交组重命名：名字写进草稿的 groups 名表（路径 → 名字），清空 = 删回默认 */
+  /** 提交重命名。组：名字写进草稿的 groups 名表（路径 → 名字）；叶子：写 w.label
+   *（层显示名；stat/gauge/light 画布同用此字段）。清空 = 删回默认。
+   * 同值不压栈：blur 会自动提交，点行名只是选中看看、点走也走这条路径，
+   * 若每次都 pushHistory，撤销链会被空步灌水。 */
   const commitRename = () => {
     const d = draftRef.current;
     if (!d || !renaming) return;
     const name = renaming.v.trim();
-    pushHistory();
-    if (!d.groups || typeof d.groups !== "object") d.groups = {};
-    if (name) d.groups[renaming.path] = name;
-    else delete d.groups[renaming.path];
+    if (renaming.path != null) {
+      if ((d.groups?.[renaming.path] ?? "") !== name) {
+        pushHistory();
+        if (!d.groups || typeof d.groups !== "object") d.groups = {};
+        if (name) d.groups[renaming.path] = name;
+        else delete d.groups[renaming.path];
+        setDraft({ ...d });
+        onChange();
+      }
+    } else if (renaming.leaf != null) {
+      const w = d.widgets[renaming.leaf] as { label?: string } | undefined;
+      if (w && (w.label ?? "") !== name) {
+        pushHistory();
+        if (name) w.label = name;
+        else delete w.label;
+        setDraft({ ...d });
+        onChange();
+      }
+    }
     setRenaming(null);
-    setDraft({ ...d });
-    onChange();
   };
 
   /** 隐藏 / 锁定（Phase 9 的通用属性）：批量落在给定下标上。
@@ -1854,7 +1911,12 @@ export default function EditorPage({ shared }: { shared: Shared }) {
       const d = treeDragRef.current;
       if (!d) return;
       treeDragRef.current = null;
-      try { if (d.active) treeDndRef.current?.commit(d); } finally { treeDndRef.current?.clear(); }
+      try {
+        if (d.active) {
+          treeJustDraggedRef.current = true;   // 松手后补发的 click 不得触发点行名开重命名
+          treeDndRef.current?.commit(d);
+        }
+      } finally { treeDndRef.current?.clear(); }
     };
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", up);
@@ -2368,14 +2430,36 @@ export default function EditorPage({ shared }: { shared: Shared }) {
           style={{ paddingLeft: 12 + depth * 16 }}
           onMouseDown={e => {
             if (spaceRef.current) return;
+            treeJustDraggedRef.current = false;   // 新一次按压：解除上次落点的 click 抑制
             if (e.shiftKey || e.ctrlKey || e.metaKey) selectWidget(i, true);
             else selectSingle(i);
             if (!(w as NodeBase).locked) treeDragPending(e, [i]);   // locked 行不可动（画布同语义）
           }}
           onContextMenu={e => openCtx(e, "widget", i)}>
           <Icon size={17} strokeWidth={1.8} className={`shrink-0 ${w.visible === false ? "opacity-30" : "opacity-70"}`} />
-          <span className={`min-w-0 flex-1 truncate ${w.visible === false ? "opacity-40" : ""}`}
-            title={layerName(w, widgetLabel)}>{layerName(w, widgetLabel)}</span>
+          {renaming?.leaf === i ? (
+            <input autoFocus value={renaming.v}
+              onChange={e => setRenaming({ leaf: i, v: e.target.value })}
+              onKeyDown={e => {
+                if (e.key === "Enter") commitRename();
+                if (e.key === "Escape") setRenaming(null);
+              }}
+              onBlur={commitRename}
+              className="min-w-0 flex-1 select-text rounded-md bg-black/30 px-1.5 py-0.5 text-[13px] text-foreground outline-none"
+              placeholder={
+                w.type === "stat" || w.type === "gauge" || w.type === "light"
+                  ? "名字（画布也显示它）" : "名字（仅图层显示名，不画画布）"} />
+          ) : (
+            <span className={`min-w-0 flex-1 truncate ${w.visible === false ? "opacity-40" : ""}`}
+              title={layerName(w, widgetLabel)}
+              onClick={() => {
+                if (treeJustDraggedRef.current) return;   // 拖拽落点后的补发 click：忽略
+                const own = (w as { label?: string }).label;
+                setRenaming({ leaf: i, v: typeof own === "string" ? own : "" });
+              }}>
+              {layerName(w, widgetLabel)}
+            </span>
+          )}
           <span className={`shrink-0 items-center gap-0.5 ${w.visible === false || (w as NodeBase).locked ? "flex" : "hidden group-hover:flex"}`}>
             <button type="button" title={w.visible === false ? "显示" : "隐藏（画布与叠加层都不画）"}
               className={`grid size-6 cursor-pointer place-items-center rounded-lg hover:bg-white/[0.08] ${w.visible === false ? "text-warning" : "text-default-500"}`}
@@ -2446,7 +2530,7 @@ export default function EditorPage({ shared }: { shared: Shared }) {
                 if (e.key === "Escape") setRenaming(null);
               }}
               onBlur={commitRename}
-              className="min-w-0 flex-1 rounded-md bg-black/30 px-1.5 py-0.5 text-[13px] text-foreground outline-none"
+              className="min-w-0 flex-1 select-text rounded-md bg-black/30 px-1.5 py-0.5 text-[13px] text-foreground outline-none"
               placeholder="组名字（留空恢复默认）" />
           ) : (
             <span className="min-w-0 flex-1 truncate"
@@ -2574,7 +2658,8 @@ export default function EditorPage({ shared }: { shared: Shared }) {
               </button>
             </div>
           )}
-          <div ref={treeContRef} className="relative min-h-0 flex-1 overflow-y-auto pb-2">
+          {/* F1 select-none：拖拽/双击行都不再抹出原生选字；重命名 input 单独 select-text 放行 */}
+          <div ref={treeContRef} className="relative min-h-0 flex-1 select-none overflow-y-auto pb-2">
             {draft.widgets.length === 0 && !draft.prompt && (
               <Hint className="px-2 py-1 text-xs">还没有部件 —— 用下面的「添加部件」。</Hint>
             )}
@@ -2979,9 +3064,13 @@ export default function EditorPage({ shared }: { shared: Shared }) {
             );
             const showW = pos.w !== undefined
               || ["html", "progress", "stat", "spark", "panel", "image", "divider"].includes(w.type);
+            // 树内改过的自定义显示名同步进标题 —— 与图层行、title 悬浮三处一致；
+            // 只拼 label 本身（layerName 的类型后缀不拼，避免「指标卡片 · 指标卡片 · 1 张」）
+            const ownRaw = (w as { label?: string }).label;
+            const ownName = typeof ownRaw === "string" ? ownRaw.trim() : "";
             return (
               <div className="flex flex-col gap-4">
-                <SubTitle>{widgetLabel(w.type)}</SubTitle>
+                <SubTitle>{widgetLabel(w.type)}{ownName ? ` · ${ownName}` : ""}</SubTitle>
                 <div className={`grid gap-3 ${showW ? (w.type === "html" ? "grid-cols-2" : "grid-cols-3") : "grid-cols-2"}`}>
                   {numInput("X", "x", pos.x)}
                   {numInput("Y", "y", pos.y)}

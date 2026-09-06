@@ -127,6 +127,8 @@ export interface PanelWidget extends FreePos {
 export interface MetricRef {
   metric: string;
   label?: string;
+  /** F3：数值后面的自定义文本（渲染器原样拼接、不自动补空格）；可含真换行符 */
+  suffix?: string;
   unit?: string;
   /** 大数字槽位专用：这个值带不带单位（不写则沿用组级 unit_policy） */
   unit_on?: boolean;

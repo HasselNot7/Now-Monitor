@@ -36,6 +36,8 @@ export function makeValue(w) {
         const v = state.HW ? dig(state.HW, o.metric) : null;
         const cls = 'vv' + (isHigh(v, mt.warn) ? ' vwarn' : '') + (v == null ? ' tmiss' : '');
         nodes.push(el('span', cls, [text(txt(v, mt))]));
+        // F3：后缀独立 span（数值色），原样拼接、缺省不占位；pair 的后缀已在 pairText 里
+        if (o.suffix) nodes.push(el('span', 'vs', [text(o.suffix)]));
       });
       host.replaceChildren(...nodes);
     },

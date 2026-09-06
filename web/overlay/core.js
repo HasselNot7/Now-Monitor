@@ -133,7 +133,8 @@ export function one(o, showUnit, showLabel) {
   const mt = meta(o);
   const v = state.HW ? dig(state.HW, o.metric) : null;
   const body = showUnit ? txt(v, mt) : plain(v, mt);
-  return (showLabel && o.label ? o.label + ' ' : '') + body;
+  // F3：后缀原样拼在数值后（空格是用户内容的一部分，不自动补）；缺省不占位
+  return (showLabel && o.label ? o.label + ' ' : '') + body + (o.suffix || '');
 }
 
 export function pairText(o) {
@@ -142,7 +143,7 @@ export function pairText(o) {
   const d = o.divide || 1;
   const a = vals[0] == null ? '--' : (vals[0] / d).toFixed(o.digits || 0);
   const b = vals[1] == null ? '--' : (vals[1] / d).toFixed(o.digits2 !== undefined ? o.digits2 : (o.digits || 0));
-  return `${o.label ? o.label + ' ' : ''}${a}/${b}${o.unit || ''}`;
+  return `${o.label ? o.label + ' ' : ''}${a}/${b}${o.unit || ''}${o.suffix || ''}`;
 }
 
 export function diffText(o) {
