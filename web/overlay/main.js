@@ -105,7 +105,19 @@ function render() {
   state.tickSeq++;                 // 帧号推进：spark 的 sampled!==tickSeq 判据全靠它
   document.body.classList.toggle('offline', !state.HW);
   document.body.classList.toggle('degraded', !!(state.HW && state.HW.degraded));
-  for (const inst of state.instances) inst.update();
+  // P2b：一个部件抛错不许带走整张叠加层。update() 里的配置性崩溃（拿 undefined 去
+  // dig() 就是 path.split 抛）每秒都会复现，所以崩过就**停用该件**（下一次 build 重建
+  // 它：预览推草稿会重建，OBS 侧重新载入场景即可），日志只打一次不刷屏。
+  // 刻意不给坏件加 .err 视觉态：观感契约的四个状态色（灰=缺数据 黄=名字 绿=正常
+  // 红=告警）已满，不为此发明第五态 —— 坏件停在最后一次画面上，配置问题由 layout-check 报。
+  for (const inst of state.instances) {
+    if (inst.broken) continue;
+    try { inst.update(); }
+    catch (e) {
+      inst.broken = true;
+      console.error('部件 update 抛错，已停用该件（其余件继续更新）：', e);
+    }
+  }
 }
 
 function clearDom() {
