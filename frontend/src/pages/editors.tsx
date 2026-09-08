@@ -1288,7 +1288,8 @@ export function TableEditor({ w, metrics, meta, onChange }: {
       value: { metrics: [first] }, bar: first,
     }]);
   };
-  // 状态图标列的算子/图标清单：从 dynicon 的 props_schema 现读（同一份契约，不抄第二份）
+  // 状态图标列的算子/图标清单：从 dynicon 的 props_schema 现读（同一份契约，不抄第二份）。
+  // 软依赖：dynicon 的 mapping 字段改名会断这里，改前 grep props_schema 消费点。
   const mapField = meta?.widgets["dynicon"]?.props_schema?.find(p => p.type === "mapping");
   const cols = w.cols ?? ["label", "value", "bar"];
   const tiny = "h-7 min-w-0 w-7 px-0";
