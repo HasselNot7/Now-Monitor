@@ -65,16 +65,23 @@ def setup_stdio():
     两个流都落到数据目录的 crash.log（追加）—— 打包版没有控制台，启动失败
     （端口被占、配置坏了）能留下的唯一痕迹就是它；未捕获异常的 traceback 和
     SystemExit 的说明默认也写 sys.stderr，落在同一个文件里。
-    带控制台的启动（python -m hwobs、重定向）不受影响。"""
-    if sys.stdout is not None and sys.stderr is not None:
+    带控制台的启动（python -m hwobs、重定向）不受影响。
+
+    H①（加固）：检测与替换用同一个 _no_stream 谓词，杜绝"检测放行、替换却
+    只认 None"的裂缝。实测（探针落 crash.log）：PyInstaller 6.22 windowed
+    无台启动传的是 None/None，NullWriter 分支属防御性加固，非在案 bug。"""
+    def _no_stream(s):
+        return s is None or type(s).__name__ == "NullWriter"
+
+    if not _no_stream(sys.stdout) and not _no_stream(sys.stderr):
         return
     log_dir = paths.data_root()
     log_dir.mkdir(parents=True, exist_ok=True)
     log = (log_dir / "crash.log").open("a", buffering=1, encoding="utf-8")
     log.write(f"\n===== {time.strftime('%Y-%m-%d %H:%M:%S')} 启动 =====\n")
-    if sys.stdout is None:
+    if _no_stream(sys.stdout):
         sys.stdout = log
-    if sys.stderr is None:
+    if _no_stream(sys.stderr):
         sys.stderr = log
 
 
@@ -83,8 +90,16 @@ def main():
     paths.ensure_overlay("monitor")
     running, _keep = already_running()
     if running:
-        print("已经有一个 Now Monitor 在跑了，直接打开管理页。")
-        webbrowser.open(f"http://127.0.0.1:{PORT}/admin")
+        # H②：管理页开在哪个端口是"那个实例" bind_port 顺延出来的，本进程无从
+        # 得知 —— 逐个探测默认段（与 bind_port 同口径），开真正活着的那个；
+        # 全探不到就只留提示，不再盲开死端口。
+        print("已经有一个 Now Monitor 在跑了。")
+        for p in range(PORT, PORT + 6):
+            with socket.socket() as probe:
+                probe.settimeout(0.25)
+                if probe.connect_ex(("127.0.0.1", p)) == 0:
+                    webbrowser.open(f"http://127.0.0.1:{p}/admin")
+                    return
         return
     port = bind_port()
     print_banner(port)
