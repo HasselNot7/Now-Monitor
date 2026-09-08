@@ -1,6 +1,6 @@
 /** 与 FastAPI 端点一一对应的类型定义。字段以 hwobs 各模块的返回为准。 */
 
-export type Widget = (CardsWidget | ChipsWidget | TextWidget | StatWidget | ProgressWidget | HtmlWidget | GaugeWidget | SparkWidget | PanelWidget | ValueWidget | IconWidget | ImageWidget | DividerWidget | BadgeWidget | BarsWidget | LightWidget | StackbarWidget) & StyledWidget & GroupedWidget & NodeBase;
+export type Widget = (CardsWidget | ChipsWidget | TextWidget | StatWidget | ProgressWidget | HtmlWidget | GaugeWidget | SparkWidget | PanelWidget | ValueWidget | IconWidget | ImageWidget | DividerWidget | BadgeWidget | BarsWidget | LightWidget | StackbarWidget | DynIconWidget) & StyledWidget & GroupedWidget & NodeBase;
 
 /** 统一 Node 模型的公共字段：画布上每个部件都有的变换与状态。
  * 全部可选 —— 旧版式没有这些字段，零迁移。渲染器消费 rotation/visible；
@@ -66,6 +66,29 @@ export interface LightWidget extends FreePos {
   type: "light";
   metric: string;
   label?: string;
+  size?: number;
+}
+
+/** 映射行（P1）：一条条件 + 一个图标。`>=`/`<=` 都含等号，相等边界的归属由行的
+ * 上下顺序决定（自上而下首个命中生效）；zero/nonzero 不存 value。 */
+export interface DynIconRule {
+  op: ">=" | "<=" | "zero" | "nonzero";
+  /** 阈值：按**显示口径**（原始值 ÷ 指标 divide，不四舍五入）—— 见 widgets.py dynicon 段 */
+  value?: number;
+  /** 内置图标名（清单 = widgets.py 的 ICON_NAMES ↔ 渲染端 icon.js 的 ICON_PATHS） */
+  icon: string;
+  /** true = 命中时图标走告警色（--bar-high，可被外观「告警色」覆盖） */
+  high?: boolean;
+}
+
+/** 动态图标（P1）：单指标按映射行切图标；全不命中走 default_icon，
+ * 缺数据走 miss_icon（没写 = 用 default_icon 加 .tmiss 压暗）。 */
+export interface DynIconWidget extends FreePos {
+  type: "dynicon";
+  metric: string;
+  mapping?: DynIconRule[];
+  default_icon?: string;
+  miss_icon?: string;
   size?: number;
 }
 
@@ -385,17 +408,34 @@ export interface StyleField {
   default?: number | boolean;
 }
 
+/** mapping 字段的一个可选算子（后端 widgets.py 的 MAPPING_OPS）：
+ * needs_value=false 的算子（zero/nonzero）不填阈值，编辑器据此收起阈值输入。 */
+export interface MappingOp {
+  id: string;
+  label: string;
+  needs_value: boolean;
+}
+
 /** 数据/内容属性字段（props_schema）：与 StyleField 对偶 —— StyleField 管外观，
  * PropField 管内容与行为（icon 选哪个图、image 的 URL…）。编辑器的属性面板按它
- * 自动生成控件（editors.tsx 的 PropsEditor），加简单部件不再手写 Inspector。 */
+ * 自动生成控件（editors.tsx 的 PropsEditor），加简单部件不再手写 Inspector。
+ * 七种类型的契约见 docs/new-widget.md「PropField 类型表」：前四种是标量控件，
+ * 后三种（P1 起）是选择器/列表控件 —— metric 走指标下拉、icon 走内置图标下拉、
+ * mapping 走行列表编辑器。 */
 export interface PropField {
   key: string;
   label: string;
-  type: "text" | "int" | "bool" | "select";
+  type: "text" | "int" | "bool" | "select" | "metric" | "icon" | "mapping";
   min?: number;
   max?: number;
   options?: string[];
   default?: string | number | boolean;
+  /** type="mapping"：可选算子（= 后端 MAPPING_OPS） */
+  ops?: MappingOp[];
+  /** type="mapping"：行里可选的图标名（= 后端 ICON_NAMES） */
+  icons?: string[];
+  /** type="icon"：true = 允许留空（留空 = 删键，行为回默认，如 miss_icon 回退兜底图） */
+  allow_empty?: boolean;
 }
 
 export interface WidgetMeta {

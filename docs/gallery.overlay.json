@@ -4,7 +4,7 @@
   "canvas": { "w": 1600, "h": 920, "mode": "free", "theme": "nord-console" },
   "prompt": {
     "user": "gallery",
-    "cmd": "./now-monitor --widgets=26",
+    "cmd": "./now-monitor --widgets=30",
     "cursor": true,
     "size": 19,
     "x": 24,
@@ -78,6 +78,13 @@
     { "type": "text", "x": 420, "y": 620, "size": 14, "text": "N3：堆叠条 正常/部分缺/全缺 · 状态灯 正常/告警(≥90 复现法同上)/缺数据" },
     { "type": "light", "x": 820, "y": 620, "metric": "cpu.usage", "label": "CPU" },
     { "type": "light", "x": 910, "y": 620, "metric": "ram.pct", "label": "内存" },
-    { "type": "light", "x": 1000, "y": 620, "metric": "misc.mobo_temp", "label": "主板" }
+    { "type": "light", "x": 1000, "y": 620, "metric": "misc.mobo_temp", "label": "主板" },
+    { "type": "text", "x": 420, "y": 760, "size": 14, "text": "P1：动态图标 正常/告警/缺数据" },
+    { "type": "dynicon", "x": 820, "y": 760, "size": 44, "metric": "cpu.usage", "default_icon": "cpu",
+      "mapping": [ { "op": ">=", "value": 80, "icon": "alert", "high": true }, { "op": ">=", "value": 10, "icon": "pulse" } ] },
+    { "type": "dynicon", "x": 910, "y": 760, "size": 44, "metric": "cpu.usage", "default_icon": "cpu",
+      "mapping": [ { "op": ">=", "value": 5, "icon": "alert", "high": true } ] },
+    { "type": "dynicon", "x": 1000, "y": 760, "size": 44, "metric": "misc.mobo_temp", "default_icon": "power",
+      "miss_icon": "wifi", "mapping": [ { "op": "nonzero", "icon": "wifi" } ] }
   ]
 }

@@ -214,6 +214,16 @@
     .free-light.tmiss .light-dot { background: var(--subtext-color); }
     .free-light .light-label { font-size: 15px; color: var(--label-color); }
 
+    /* P1：动态图标 —— 三态色同状态灯走主题变量（常态文字色 / 告警 --bar-high /
+       缺数据 --subtext-color），工厂只切类名、绝不写 inline stroke（inline 优先级
+       会压死下面两条覆盖）。.tmiss 放最后：与 .high 同特异度，靠顺序盖住。 */
+    .free-dynicon svg { display: block; stroke: var(--text-color); }
+    .free-dynicon.high svg { stroke: var(--bar-high); }
+    .free-dynicon.tmiss svg { stroke: var(--subtext-color); }
+    /* style.fade 默认关：淡入只在重建 svg 节点时重放，时长走 --anim-ms 单点 */
+    .free-dynicon.fade svg { animation: dynicon-in var(--anim-ms) ease; }
+    @keyframes dynicon-in { from { opacity: 0; } to { opacity: 1; } }
+
     /* N3：堆叠条 —— 分段宽度过渡走 --anim-ms；轨道色 = --bar-bg（外观 track 覆盖）；
        全缺/全零整条 .tmiss 压暗 */
     .free-stackbar { display: flex; overflow: hidden; background: var(--bar-bg); }

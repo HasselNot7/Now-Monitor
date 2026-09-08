@@ -19,11 +19,12 @@ import { makeDivider } from './widgets/divider.js';
 import { makeBadge } from './widgets/badge.js';
 import { makeLight } from './widgets/light.js';
 import { makeStackbar } from './widgets/stackbar.js';
+import { makeDynIcon } from './widgets/dynicon.js';
 
 export const WIDGET_TYPES = {
   cards: makeCards, chips: makeChips, text: makeText,
   stat: makeStat, progress: makeProgress, html: makeHtml,
   gauge: makeGauge, spark: makeSpark, panel: makePanel, value: makeValue,
   icon: makeIcon, image: makeImage, divider: makeDivider, badge: makeBadge,
-  bars: makeBars, light: makeLight, stackbar: makeStackbar,
+  bars: makeBars, light: makeLight, stackbar: makeStackbar, dynicon: makeDynIcon,
 };

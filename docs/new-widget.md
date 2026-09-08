@@ -21,6 +21,27 @@
   渲染端由 `applyStyle` 消费，工厂不用自己解析通用键；
 - 字段型部件（下拉/数字/开关）再加 `props_schema`，编辑器属性面板自动生成
   （参照 `DIVIDER_PROPS`，`hwobs/widgets.py:371`）。
+
+**PropField 类型表（P1 起七种；SSOT = 后端 `props_schema` 的 `type`，编辑器 `PropsEditor`
+据此生成控件）**。前四种是标量行（标签左、控件右），后三种是整块控件（自带标签在上）。
+**这是新契约**：加部件优先扩这张表，别再手写 Inspector（P2 表格部件就走 `mapping` 这条路）。
+
+| type | 控件 | 值域 | 用到的扩展键 |
+|---|---|---|---|
+| `text` | 单行输入 | string | `default`（占位） |
+| `int` | 数字输入（钳制到区间） | int | `min` `max` `default` |
+| `bool` | 开关 | true / false | `default` |
+| `select` | 原生下拉（原样显示选项） | `options` 之一 | `options` `default` |
+| `metric` | 指标下拉（复用 `MetricSelect`：名字主文本 + 路径弱化成小号灰字） | 注册表输出路径 | — |
+| `icon` | 内置图标下拉（名字 + 中文注；不做形状预览 —— 画布 iframe 就是预览，复制 path 进前端等于给图标清单开第三个副本） | `options`（= `ICON_NAMES`） | `options` `default` `allow_empty` |
+| `mapping` | 映射行列表：条件下拉 + 阈值 + 图标 + 告警色，加行 / 删行 / ↑↓ 排序 | `{op, value?, icon, high?}[]` | `ops` `icons` |
+
+扩展键语义：`ops` = mapping 的可选算子（`{id, label, needs_value}`；`needs_value=false`
+的算子不填阈值，编辑器收起阈值框**并删掉 `value` 键**）；`icons` = mapping 行里可选的图标名。
+两个键的值都由后端下发（`MAPPING_OPS` / `ICON_NAMES`），编辑器不写死任何一份清单。
+`mapping` 清空 = 删键，与标量控件的「清空 = 删键回默认」同口径；行编辑一律「原地改 +
+`onChange()`」，撤销交给 `EditorPage` 的 B2 影子合并（面板编辑 500ms 内并成一步），
+控件自己绝不 `pushHistory`。
 - 同步 `MENU_ORDER`（`hwobs/widgets.py:650`）——它只管**组内排序**：节间顺序在
   `CATEGORIES`，归节看各件的 `category`，三者别混。
 - **编辑器 height 镜像**：模板缩略图的 `estH`（`frontend/src/pages/editors.tsx:1164`）
@@ -54,7 +75,7 @@ metrics/pair/diff/items/value/sub 之外的键）必须同步进这两个元组�
 
 ### 5. 进 `docs/gallery.overlay.json`
 
-26 部件画廊（`docs/gallery.overlay.json`）是观感回归的肉眼基线：新部件摆进去，
+部件画廊（`docs/gallery.overlay.json`，全部件各一展位）是观感回归的肉眼基线：新部件摆进去，
 改任何渲染/样式代码后导入过一遍。用法：编辑器「模板」弹窗支持导入文件
 （认 `{name,desc,config}` 封装，也认裸版式 JSON —— `frontend/src/pages/editors.tsx:1211`），
 把这份 JSON 导入即可；导入后 `POST /api/layout-check` 应零 error。
@@ -126,5 +147,5 @@ metrics/pair/diff/items/value/sub 之外的键）必须同步进这两个元组�
 
 ```
 python scripts/check-defaults.py     # 全绿
-python -m hwobs                      # 导 gallery → layout-check 零 error → 26 部件肉眼过一遍
+python -m hwobs                      # 导 gallery → layout-check 零 error → 全部件肉眼过一遍
 ```

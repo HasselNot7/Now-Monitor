@@ -5,15 +5,15 @@ import {
   ChevronRight, ChevronUp, CircleDashed, Code, Copy, Equal, Eye, EyeOff, Grid3x3,
   Group as GroupIcon, Hash, Image as ImageIcon, LayoutGrid, Lightbulb, Lock, LockOpen, Magnet, Minus,
   Package, Pencil, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Plus,
-  Rows3, Sigma, Square, Star, Tag, Trash2, Type, Ungroup as UngroupIcon,
+  Rows3, Sigma, Square, Star, Tag, ToggleRight, Trash2, Type, Ungroup as UngroupIcon,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, clone, outPaths } from "../api";
 import type {
-  CardsWidget, ChipsWidget, CustomComponent, FreePos, GaugeWidget, GroupedWidget, HtmlWidget,
-  LayoutPreset, LightWidget, NodeBase, OverlayConfig, ProgressWidget, SparkWidget, StackbarWidget,
-  StatWidget, TextWidget, ValueWidget, Widget,
+  CardsWidget, ChipsWidget, CustomComponent, DynIconWidget, FreePos, GaugeWidget, GroupedWidget,
+  HtmlWidget, LayoutPreset, LightWidget, NodeBase, OverlayConfig, ProgressWidget, SparkWidget,
+  StackbarWidget, StatWidget, TextWidget, ValueWidget, Widget,
 } from "../types";
 import type { Shared } from "../shared";
 import type { WidgetsMeta } from "../types";
@@ -47,6 +47,7 @@ const FALLBACK_LABEL: Record<string, string> = {
   progress: "进度条", html: "自定义 HTML", gauge: "圆环仪表",
   spark: "迷你曲线", panel: "背景面板", value: "数值组",
   icon: "图标", image: "图片", divider: "分隔线", badge: "徽章", bars: "柱状条",
+  dynicon: "动态图标",
 };
 
 const ICON_MAP: Record<string, LucideIcon> = {
@@ -55,13 +56,14 @@ const ICON_MAP: Record<string, LucideIcon> = {
   "activity": Activity, "square": Square, "sigma": Sigma,
   "star": Star, "image": ImageIcon, "minus": Minus, "tag": Tag,
   "chart-bar": BarChart3,
-  "lightbulb": Lightbulb, "align-justify": AlignJustify,
+  "lightbulb": Lightbulb, "align-justify": AlignJustify, "toggle-right": ToggleRight,
 };
 
 const fallbackIcon = (t: string): LucideIcon =>
   ({ cards: LayoutGrid, chips: Rows3, text: Type, stat: Hash, progress: Equal,
      html: Code, gauge: CircleDashed, spark: Activity, panel: Square, value: Sigma,
-     icon: Star, image: ImageIcon, divider: Minus, badge: Tag, bars: BarChart3 }[t] ?? LayoutGrid);
+     icon: Star, image: ImageIcon, divider: Minus, badge: Tag, bars: BarChart3,
+     dynicon: ToggleRight }[t] ?? LayoutGrid);
 
 /** 预览 iframe 入口：构建产物里留空 = 同源直连 FastAPI；dev 模式（.env.development）
  * 给 /preview —— vite 代理回后端的 /，保持同源，拖动时才能直改 iframe 里的宿主节点。 */
@@ -87,6 +89,7 @@ function estHeight(w: Widget): number {
     case "spark": return w.h ?? 32;
     case "panel": return w.h ?? 100;
     case "value": return Math.round((w.size ?? 19) * 1.2);
+    case "dynicon": return w.size ?? 24;   // 纯尺寸件：占高 = 图标边长（同 widgets.py dynicon_height）
   }
   return 40;
 }
@@ -955,7 +958,10 @@ export default function EditorPage({ shared }: { shared: Shared }) {
       x: 48 + (n % 4) * 32, y: 40 + (n % 4) * 28,
       ...(meta?.widgets[type]?.defaults ?? {}),
     };
-    if (type === "stat" || type === "progress" || type === "gauge" || type === "spark" || type === "bars") {
+    // 单指标件：落地就绑第一个指标，别让用户面对一个空件（dynicon 同族：
+    // 没 metric 的动态图标恒等于兜底，等于摆了个死件）
+    if (type === "stat" || type === "progress" || type === "gauge" || type === "spark"
+      || type === "bars" || type === "dynicon") {
       Object.assign(base, { type, metric: first });
     }
     if (type === "value") Object.assign(base, { type, metrics: { metrics: [first] } });
@@ -2351,6 +2357,12 @@ export default function EditorPage({ shared }: { shared: Shared }) {
             (w as GaugeWidget).size = Math.max(48, Math.round(d.nw));
             w.w = Math.round(d.nw);
           }
+          if (t0 === "dynicon") {
+            // P1/D5：纯尺寸件拉框必须落到 size（跟 gauge 同法）—— 只写 w.w 的话
+            // 渲染端不认几何宽，下一个 rects 帧就把选框打回原形，等于死旋钮。
+            (w as DynIconWidget).size = Math.max(12, Math.min(200, Math.round(d.nw)));
+            w.w = Math.round(d.nw);
+          }
         }
       }
       setDraft({ ...cur });
@@ -3180,7 +3192,7 @@ export default function EditorPage({ shared }: { shared: Shared }) {
                   const ps = meta?.widgets[w.type]?.props_schema;
                   return ps && ps.length ? (
                     <div className="border-t border-white/[0.04] pt-4">
-                      <PropsEditor w={w} schema={ps} onChange={onChange} />
+                      <PropsEditor w={w} schema={ps} onChange={onChange} metrics={metrics} />
                     </div>
                   ) : null;
                 })()}

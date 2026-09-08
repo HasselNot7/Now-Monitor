@@ -453,6 +453,92 @@ def light_validate(w, errors, warnings):
     _style_check(COMMON_STYLE, w.get("style"), errors, warnings)
 
 
+# --- dynicon：动态图标（P1） ---------------------------------------------------
+# 一行映射 = 一个条件 + 一个图标，自上而下首个命中生效；全不命中走 default_icon，
+# 缺数据走 miss_icon（没写就用 default_icon 加 .tmiss 压暗）。图标清单与 icon 件共用
+# ICON_NAMES（渲染端 icon.js 的 ICON_PATHS 是同一份 path，dynicon 直接 import）。
+#
+# 阈值口径（P1 拍板）：比的是**显示口径**的值 —— 原始值 ÷ 注册表 divide，不四舍五入。
+# 与 warn/isHigh（按原始值）刻意不同：warn 是注册表里的作者级字段，dynicon 的行是用户
+# 在面板上手填的，他的参照物是画布上显示的那个数。内置 31 个指标里只有 cpu.clock_mhz
+# 带 divide（kHz→GHz），按原始值判会让「≥ 3」这类阈值永远命中且毫无提示。
+# 非有限数（含字符串、null）一律算缺数据，绝不强转 —— 否则 "" == 0 会误命中 zero 行。
+
+MAPPING_OPS = [
+    {"id": ">=", "label": "≥ 阈值（含）", "needs_value": True},
+    {"id": "<=", "label": "≤ 阈值（含）", "needs_value": True},
+    {"id": "zero", "label": "= 0（零）", "needs_value": False},
+    {"id": "nonzero", "label": "≠ 0（非零）", "needs_value": False},
+]
+
+# >= 与 <= 都含等号，所以 x == 阈值同时满足两个方向 —— 归属由行的上下顺序决定
+# （谁在上谁生效），这就是 label 里写「（含）」、且不提供 > / < 的原因。
+DYNICON_STYLE = COMMON_STYLE + [
+    _style_field("fade", "切换淡入（时长走 --anim-ms）", "bool", default=False),
+]
+
+# mapping 是「行为」不是「观感」，所以进 props_schema：_style_check 只认
+# color/range/int/bool 四种值类型（放 style_schema 会被当未知键警告掉），
+# 而 PropsEditor 按 props_schema 生成控件。mapping 字段刻意不写 default、
+# defaults 里也刻意不放 mapping —— 空数组写进 overlay.json 没有意义，
+# 渲染端对缺键的容错见 dynicon.js。
+DYNICON_PROPS = [
+    {"key": "metric", "label": "指标", "type": "metric"},
+    {"key": "mapping", "label": "映射（自上而下，首个命中生效）", "type": "mapping",
+     "ops": MAPPING_OPS, "icons": ICON_NAMES},
+    {"key": "default_icon", "label": "兜底图标（全不命中）", "type": "icon",
+     "options": ICON_NAMES, "default": "pulse"},
+    {"key": "miss_icon", "label": "缺数据图标（留空 = 兜底压暗）", "type": "icon",
+     "options": ICON_NAMES, "allow_empty": True},
+    {"key": "size", "label": "大小 px", "type": "int", "min": 12, "max": 200, "default": 24},
+]
+
+
+def dynicon_height(w):
+    return _int_in(w, "size", 24, 12, 200)
+
+
+def dynicon_validate(w, errors, warnings):
+    _metric(w, errors, "dynicon")
+    ops = {o["id"]: o for o in MAPPING_OPS}
+    rows = w.get("mapping")
+    if rows is None:
+        warnings.append("没配映射行，图标恒等于兜底（不会随数值变）")
+    elif not isinstance(rows, list):
+        errors.append(f"mapping 必须是数组（现在是 {rows!r}）")
+    else:
+        if not rows:
+            warnings.append("没配映射行，图标恒等于兜底（不会随数值变）")
+        for n, row in enumerate(rows, 1):
+            if not isinstance(row, dict):
+                errors.append(f"第 {n} 行映射必须是对象（现在是 {row!r}）")
+                continue
+            op = row.get("op")
+            if op not in ops:
+                errors.append(f"第 {n} 行映射的 op {op!r} 不认识（可选：{' / '.join(ops)}）")
+            elif ops[op]["needs_value"]:
+                v = row.get("value")
+                if not isinstance(v, (int, float)) or isinstance(v, bool):
+                    errors.append(f"第 {n} 行映射（{op}）需要数值阈值（现在是 {v!r}）")
+            icon = row.get("icon")
+            if not isinstance(icon, str) or not icon:
+                errors.append(f"第 {n} 行映射缺 icon（命中了也没图画）")
+            elif icon not in ICON_NAMES:
+                warnings.append(f"第 {n} 行映射的图标 {icon!r} 不在内置图标集，会回退 pulse")
+            hi = row.get("high")
+            if hi is not None and not isinstance(hi, bool):
+                errors.append(f"第 {n} 行映射 high 需要是 true / false（现在是 {hi!r}）")
+    for key in ("default_icon", "miss_icon"):
+        v = w.get(key)
+        if v is None:
+            continue
+        if not isinstance(v, str) or not v:
+            errors.append(f"{key} 需要是图标名（现在是 {v!r}）")
+        elif v not in ICON_NAMES:
+            warnings.append(f"{key} {v!r} 不在内置图标集，会回退 pulse")
+    _style_check(DYNICON_STYLE, w.get("style"), errors, warnings)
+
+
 # --- stackbar：堆叠条（N3） ----------------------------------------------------
 # 长吃几何 w、粗吃 height 属性（与 progress 横条同口径）；metrics 组复用 GroupDef
 # （refs.GROUP_KEYS 已含 "metrics"，引用遍历零新增）。段配色渲染端派生（D1-A）。
@@ -642,13 +728,23 @@ WIDGETS = {
         "height": light_height,
         "validate": light_validate,
     },
+    "dynicon": {
+        "label": "动态图标", "icon": "toggle-right",
+        "summary": "动态图标：按数值切图标（映射行自上而下首个命中生效），可配兜底与缺数据图标",
+        "category": "data",
+        "defaults": {"size": 24, "default_icon": "pulse"},
+        "style_schema": DYNICON_STYLE,
+        "props_schema": DYNICON_PROPS,
+        "height": dynicon_height,
+        "validate": dynicon_validate,
+    },
 }
 
 
 # 「添加部件」菜单：节顺序与节名在 CATEGORIES（SSOT），归节看各登记的 category；
 # MENU_ORDER 只决定同一节内谁先谁后（组内排序），登记顺序本身不承载语义。
 MENU_ORDER = ["stat", "value", "progress", "gauge", "spark", "bars", "stackbar", "html", "icon",
-              "image", "divider", "badge", "light", "cards", "chips", "text", "panel"]
+              "image", "divider", "badge", "light", "dynicon", "cards", "chips", "text", "panel"]
 
 CATEGORIES = [
     ("data", "数据"), ("chart", "图表"), ("layout", "布局"),

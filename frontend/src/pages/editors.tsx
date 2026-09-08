@@ -4,16 +4,16 @@ import { Input, Textarea } from "@heroui/input";
 import { Modal, ModalBody, ModalContent, ModalFooter, ModalHeader } from "@heroui/modal";
 import { Select, SelectItem } from "@heroui/select";
 import { cn } from "@heroui/theme";
-import { X } from "lucide-react";
+import { ChevronDown, ChevronUp, Plus, X } from "lucide-react";
 /** 版式编辑器的子组件：指标选择器、槽位编辑、卡片/chips/text 部件编辑器、模板库弹窗。
  * 控件一律用 HeroUI（v2 —— 与 Now Playing 同一套），样式学 NP（淡蓝字段标签、flat 控件、卡片底）。
  * 草稿对象直接原地改，改完调 onChange() 触发上层重渲染 + 防抖校验。 */
 
 import { useEffect, useRef, useState } from "react";
 import type {
-  CardItem, CardsWidget, ChipsWidget, GaugeWidget, GroupDef, HtmlWidget, LayoutPreset, LightWidget,
-  Metric, MetricRef, OverlayConfig, ProgressWidget, PropField, SparkWidget, StackbarWidget,
-  StatWidget, StyleField, TextWidget, ValueWidget, Widget, WidgetsMeta,
+  CardItem, CardsWidget, ChipsWidget, DynIconRule, GaugeWidget, GroupDef, HtmlWidget, LayoutPreset,
+  LightWidget, Metric, MetricRef, OverlayConfig, ProgressWidget, PropField, SparkWidget,
+  StackbarWidget, StatWidget, StyleField, TextWidget, ValueWidget, Widget, WidgetsMeta,
 } from "../types";
 import { AnimatedRow } from "../motion";
 import { api } from "../api";
@@ -28,6 +28,8 @@ type TFProps = {
   placeholder?: string;
   title?: string;
   type?: string;
+  /** 数字框步进（P1 加，仅透传）：阈值要能吃小数，step="any" 才不会把 85.5 判成非法值 */
+  step?: string;
   value?: string;
   defaultValue?: string;
   onChange?: (v: string) => void;
@@ -820,11 +822,168 @@ export function StyleEditor({ w, schema, onChange }: {
   );
 }
 
-/** 数据属性面板：按后端 props_schema 自动生成（text/int/bool/select）。
+/* --- P1：props_schema 的三种新控件（metric / icon / mapping） ------------------
+   与四类标量控件并列，不共用布局代码 —— 老件的属性面板逐像素不变。
+   类型表契约（含 ops/icons/allow_empty 扩展键语义）见 docs/new-widget.md。 */
+
+/** 内置图标的中文注：纯装饰，查不到就退回名字本身，不建新契约。
+ * 图标清单的 SSOT 在后端（widgets.py 的 ICON_NAMES ↔ 渲染端 icon.js 的 ICON_PATHS）。 */
+const ICON_CN: Record<string, string> = {
+  cpu: "CPU", temp: "温度", power: "电源", gauge: "仪表", pulse: "心跳", wifi: "WiFi",
+  disk: "磁盘", ram: "内存", clock: "时钟", alert: "告警", screen: "屏幕", liquid: "水冷",
+};
+const iconLabel = (n: string) => (ICON_CN[n] ? `${n} · ${ICON_CN[n]}` : n);
+
+/** type="icon"：内置图标下拉，选项 = props_schema 的 options（= 后端 ICON_NAMES）。
+ * 不做形状预览（P1 拍板 D4=A）：画布 iframe 就是实时预览，把 12 条 path 复制进前端
+ * 等于给图标清单开第三个副本（漂移面），要做得连着做「图标资源单一来源」一期。 */
+function IconField({ f, value, onSet }: { f: PropField; value: unknown; onSet: (v: string) => void }) {
+  return (
+    <select value={typeof value === "string" ? value : String(f.default ?? "")}
+      onChange={e => onSet(e.target.value)} aria-label={f.label}
+      className="h-8 min-w-0 max-w-[168px] cursor-pointer rounded-lg border border-white/10 bg-[#1a1a1d] px-2 text-sm text-foreground outline-none">
+      {f.allow_empty && <option value="">— 留空 —</option>}
+      {(f.options ?? []).map(n => <option key={n} value={n}>{iconLabel(n)}</option>)}
+    </select>
+  );
+}
+
+/** type="metric"：整块行（标签在上、下拉通栏）—— 指标下拉塞不进标量行那条 300px 窄栏。 */
+function MetricField({ f, w, metrics, onChange }: {
+  f: PropField; w: Widget; metrics: Metric[]; onChange: () => void;
+}) {
+  const node = w as unknown as Record<string, unknown>;
+  const v = typeof node[f.key] === "string" ? node[f.key] as string : undefined;
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5">
+      <FieldLabel>{f.label}</FieldLabel>
+      <MetricSelect metrics={metrics} value={v} allowEmpty={false} compact
+        onChange={nv => { if (nv) { node[f.key] = nv; onChange(); } }} />
+    </div>
+  );
+}
+
+/** 阈值输入：与 IntField 同法的本地文本态（编辑中不被回灌），但**不取整** ——
+ * dynicon 的阈值吃小数（"≥ 84.5"），配合 step="any" 才不会把小数判成非法值。 */
+function ThresholdField({ v, scale, onSet }: {
+  v?: number; scale?: number; onSet: (n: number | undefined) => void;
+}) {
+  const [text, setText] = useState(v === undefined ? "" : String(v));
+  const editingRef = useRef(false);
+  useEffect(() => {
+    if (!editingRef.current) setText(v === undefined ? "" : String(v));
+  }, [v]);
+  const title = scale && scale !== 1
+    ? `按显示口径比较：原始值 ÷ ${scale}（不四舍五入）` : "阈值（按显示口径，不四舍五入）";
+  return (
+    <TF type="number" step="any" className="w-24 min-w-0" title={title} aria-label="阈值"
+      value={text} placeholder="0"
+      onChange={t => {
+        editingRef.current = true;
+        setText(t);
+        onSet(t === "" || !Number.isFinite(+t) ? undefined : +t);
+      }}
+      onBlur={() => { editingRef.current = false; }} />
+  );
+}
+
+/** type="mapping"：映射行列表编辑器（P1 dynicon 首发，P2 表格部件复用）。
+ * 行 = {op, value?, icon, high?}，自上而下首个命中生效；算子清单与图标清单都来自
+ * 后端 props_schema（ops / icons），这里不写死任何一份。
+ * 编辑一律「原地改 + onChange()」：撤销交给 EditorPage 的 B2 影子合并（面板编辑
+ * 500ms 内并成一步），本组件绝不自己 pushHistory。 */
+function MappingEditor({ f, w, metrics, onChange }: {
+  f: PropField; w: Widget; metrics: Metric[]; onChange: () => void;
+}) {
+  const node = w as unknown as Record<string, unknown>;
+  const rows = (Array.isArray(node[f.key]) ? node[f.key] : []) as DynIconRule[];
+  const ops = f.ops ?? [];
+  const icons = f.icons ?? [];
+  const metric = typeof node.metric === "string" ? node.metric : "";
+  const m = metrics.find(x => x.out === metric);
+  const commit = (next: DynIconRule[]) => {
+    if (next.length) node[f.key] = next;
+    else delete node[f.key];        // 清空 = 删键（与 PropsEditor.set 同口径）
+    onChange();
+  };
+  const patch = (i: number, p: Partial<DynIconRule>) =>
+    commit(rows.map((r, j) => (j === i ? { ...r, ...p } : r)));
+  const move = (i: number, d: number) => {
+    const j = i + d;
+    if (j < 0 || j >= rows.length) return;
+    const next = rows.slice();
+    [next[i], next[j]] = [next[j], next[i]];
+    commit(next);
+  };
+  const needsValue = (op: string) => (ops.find(o => o.id === op)?.needs_value ?? true);
+  const tiny = "h-7 min-w-0 w-7 px-0";
+  return (
+    <div className="flex min-w-0 flex-col gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <FieldLabel>{f.label}</FieldLabel>
+        <Btn size="sm" variant="ghost" className="h-7 shrink-0 rounded-lg px-2 text-xs"
+          title="在末尾加一行映射"
+          onPress={() => commit([...rows, {
+            op: (ops[0]?.id ?? ">=") as DynIconRule["op"], value: 0, icon: icons[0] ?? "pulse",
+          }])}>
+          <Plus size={13} className="mr-1" />加一行
+        </Btn>
+      </div>
+      {!rows.length && (
+        <Hint className="text-sm">还没有映射行 —— 图标恒等于兜底，不会随数值变。</Hint>
+      )}
+      {rows.map((r, i) => (
+        <div key={i} className="rounded-xl border border-white/[0.07] bg-black/25 p-2">
+          <div className="flex items-center gap-1.5">
+            <select value={r.op} aria-label="条件"
+              onChange={e => {
+                // 算子清单来自后端 ops（运行时字符串），落进受契约约束的行模型
+                const op = e.target.value as DynIconRule["op"];
+                patch(i, needsValue(op) ? { op } : { op, value: undefined });  // 零值类算子不存阈值
+              }}
+              className="h-8 min-w-0 flex-1 cursor-pointer rounded-lg border border-white/10 bg-[#1a1a1d] px-2 text-sm text-foreground outline-none">
+              {(ops.length ? ops : [{ id: r.op, label: r.op, needs_value: true }]).map(o =>
+                <option key={o.id} value={o.id}>{o.label}</option>)}
+            </select>
+            {needsValue(r.op) && (
+              <ThresholdField v={r.value} scale={m?.divide ?? 1}
+                onSet={n => patch(i, { value: n })} />
+            )}
+            <Btn isIconOnly size="sm" variant="ghost" className={tiny} title="上移"
+              onPress={() => move(i, -1)}><ChevronUp size={14} /></Btn>
+            <Btn isIconOnly size="sm" variant="ghost" className={tiny} title="下移"
+              onPress={() => move(i, 1)}><ChevronDown size={14} /></Btn>
+            <Btn isIconOnly size="sm" variant="danger" className={tiny} title="删除这行"
+              onPress={() => commit(rows.filter((_, j) => j !== i))}><X size={14} /></Btn>
+          </div>
+          <div className="mt-1.5 flex items-center justify-between gap-2">
+            <select value={r.icon} aria-label="图标"
+              onChange={e => patch(i, { icon: e.target.value })}
+              className="h-8 min-w-0 flex-1 cursor-pointer rounded-lg border border-white/10 bg-[#1a1a1d] px-2 text-sm text-foreground outline-none">
+              {(icons.length ? icons : [r.icon]).map(n =>
+                <option key={n} value={n}>{iconLabel(n)}</option>)}
+            </select>
+            <span className="flex shrink-0 items-center gap-1.5 text-xs text-color-desc">告警色
+              <TSwitch size="sm" isSelected={!!r.high}
+                onChange={b => patch(i, { high: b || undefined })} />
+            </span>
+          </div>
+          {m?.na_zero && (r.op === "zero" || r.op === "nonzero") && (
+            <Hint className="text-xs">该指标把 0 当缺数据（注册表 na_zero），
+              这行等值判断不会命中 —— 要「开/关」语义请换 cpu.usage / net.* 这类指标。</Hint>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** 数据属性面板：按后端 props_schema 自动生成（P1 起七种类型：text/int/bool/select
+ * 四类标量 + metric/icon/mapping 三块控件，类型表见 docs/new-widget.md）。
  * 与 StyleEditor 对偶 —— 那个管「外观」，这个管「内容/行为」；就地改部件字段，
  * 清空 = 删键回默认。schema 单一来源在 hwobs/widgets.py，与后端校验共用一份。 */
-export function PropsEditor({ w, schema, onChange }: {
-  w: Widget; schema: PropField[]; onChange: () => void;
+export function PropsEditor({ w, schema, onChange, metrics }: {
+  w: Widget; schema: PropField[]; onChange: () => void; metrics?: Metric[];
 }) {
   const get = (key: string): unknown => (w as unknown as Record<string, unknown>)[key];
   const set = (key: string, v: unknown) => {
@@ -838,6 +997,13 @@ export function PropsEditor({ w, schema, onChange }: {
       <SubTitle>属性</SubTitle>
       {schema.map(f => {
         const v = get(f.key);
+        // P1 的两种整块控件不进标量行（那条行布局塞不下指标下拉与映射列表）
+        if (f.type === "mapping") {
+          return <MappingEditor key={f.key} f={f} w={w} metrics={metrics ?? []} onChange={onChange} />;
+        }
+        if (f.type === "metric") {
+          return <MetricField key={f.key} f={f} w={w} metrics={metrics ?? []} onChange={onChange} />;
+        }
         return (
           <div key={f.key} className="flex items-center justify-between gap-3">
             <span className="min-w-0 flex-1 truncate text-xs text-color-desc">{f.label}</span>
@@ -859,6 +1025,9 @@ export function PropsEditor({ w, schema, onChange }: {
                 className="h-8 cursor-pointer rounded-lg border border-white/10 bg-[#1a1a1d] px-2 text-sm text-foreground outline-none">
                 {(f.options ?? []).map(o => <option key={o} value={o}>{o}</option>)}
               </select>
+            )}
+            {f.type === "icon" && (
+              <IconField f={f} value={v} onSet={t => set(f.key, t)} />
             )}
           </div>
         );
@@ -1225,6 +1394,7 @@ function PresetThumb({ cfg }: { cfg: OverlayConfig }) {
         return (w.arc === "half" ? (w.size ?? 120) / 2 : (w.size ?? 120)) + (w.label ? 20 : 0);
       case "light": return Math.max(w.size ?? 12, w.label ? line(15) : 0);
       case "stackbar": return w.height ?? 12;
+      case "dynicon": return w.size ?? 24;   // 纯尺寸件：占高 = 图标边长（同 widgets.py dynicon_height）
       default: return 40;
     }
   };

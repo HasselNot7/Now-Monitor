@@ -3,7 +3,7 @@
 // 图标清单的校验端在 hwobs/widgets.py 的 ICON_NAMES，两边以名字为契约。
 import { el } from '../core.js';
 
-const ICON_PATHS = {
+export const ICON_PATHS = {
   cpu: '<rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1.5v2.5M15 1.5v2.5M9 20v2.5M15 20v2.5M1.5 9H4M1.5 15H4M20 9h2.5M20 15h2.5"/>',
   temp: '<path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z"/>',
   power: '<path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/>',
