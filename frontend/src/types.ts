@@ -1,6 +1,6 @@
 /** 与 FastAPI 端点一一对应的类型定义。字段以 hwobs 各模块的返回为准。 */
 
-export type Widget = (CardsWidget | ChipsWidget | TextWidget | StatWidget | ProgressWidget | HtmlWidget | GaugeWidget | SparkWidget | PanelWidget | ValueWidget | IconWidget | ImageWidget | DividerWidget | BadgeWidget | BarsWidget | LightWidget | StackbarWidget | DynIconWidget) & StyledWidget & GroupedWidget & NodeBase;
+export type Widget = (CardsWidget | ChipsWidget | TextWidget | StatWidget | ProgressWidget | HtmlWidget | GaugeWidget | SparkWidget | PanelWidget | ValueWidget | IconWidget | ImageWidget | DividerWidget | BadgeWidget | BarsWidget | LightWidget | StackbarWidget | DynIconWidget | TableWidget) & StyledWidget & GroupedWidget & NodeBase;
 
 /** 统一 Node 模型的公共字段：画布上每个部件都有的变换与状态。
  * 全部可选 —— 旧版式没有这些字段，零迁移。渲染器消费 rotation/visible；
@@ -90,6 +90,33 @@ export interface DynIconWidget extends FreePos {
   default_icon?: string;
   miss_icon?: string;
   size?: number;
+}
+
+/** 表格的一行（P2）：行数组叫 items、单元格容器用 value / bar / metric / mapping ——
+ * 这四个键名都已在 hwobs/refs.py 的白名单里，所以引用遍历零改动（改名成 rows/cells
+ * 会静默丢引用，见 docs/new-widget.md「v3 立项触发条件」）。 */
+export interface TableRow {
+  /** 渲染按 key 索引单元格（同 cards 的 item.key），必须唯一 */
+  key: string;
+  label?: string;
+  /** 状态灯 / 状态图标列的求值指标 */
+  metric?: string;
+  /** 数值列：一组值（支持 F3 的 \n 与前后空格契约） */
+  value?: GroupDef;
+  /** 条列：定标指标（量程与告警色取注册表 range / warn） */
+  bar?: string;
+  /** 状态图标列：4 算子映射行，语义与 dynicon 同源（全不命中 = 该格留空） */
+  mapping?: DynIconRule[];
+}
+
+/** 表格（P2）：列 = cols 选的 kind 有序子集，列宽在一个 grid 里跨行对齐 */
+export interface TableWidget extends FreePos {
+  type: "table";
+  items: TableRow[];
+  cols?: ("label" | "value" | "bar" | "light" | "icon")[];
+  head?: boolean;
+  /** 行高 px（16~80） */
+  row_h?: number;
 }
 
 /** 堆叠条（N3/D1-A）：metrics 组按值占比横排分段；长吃几何 w、粗吃 height 属性（同 progress 横条） */
@@ -408,6 +435,12 @@ export interface StyleField {
   default?: number | boolean;
 }
 
+/** multiselect 字段的一个可选项 */
+export interface Choice {
+  id: string;
+  label: string;
+}
+
 /** mapping 字段的一个可选算子（后端 widgets.py 的 MAPPING_OPS）：
  * needs_value=false 的算子（zero/nonzero）不填阈值，编辑器据此收起阈值输入。 */
 export interface MappingOp {
@@ -425,7 +458,7 @@ export interface MappingOp {
 export interface PropField {
   key: string;
   label: string;
-  type: "text" | "int" | "bool" | "select" | "metric" | "icon" | "mapping";
+  type: "text" | "int" | "bool" | "select" | "metric" | "icon" | "mapping" | "multiselect";
   min?: number;
   max?: number;
   options?: string[];
@@ -436,6 +469,8 @@ export interface PropField {
   icons?: string[];
   /** type="icon"：true = 允许留空（留空 = 删键，行为回默认，如 miss_icon 回退兜底图） */
   allow_empty?: boolean;
+  /** type="multiselect"：可选项清单（= 后端 TABLE_KINDS 这类 {id,label}）；选中顺序即值顺序 */
+  choices?: Choice[];
 }
 
 export interface WidgetMeta {

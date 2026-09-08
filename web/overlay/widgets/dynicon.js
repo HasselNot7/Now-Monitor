@@ -10,8 +10,9 @@ import { el, dig, meta, state } from '../core.js';
 import { ICON_PATHS } from './icon.js';
 
 /** 首个命中的映射行；没有命中返回 null。行结构不合法（op 不认识、缺 value）
- * 一律跳过而不是抛错 —— 校验端已在 layout-check 里报错，这里不能白屏。 */
-function firstHit(rows, x) {
+ * 一律跳过而不是抛错 —— 校验端已在 layout-check 里报错，这里不能白屏。
+ * P2 起 table 的状态图标列也用它（同一套 4 算子语义，别写第二份）。 */
+export function firstHit(rows, x) {
   for (const r of rows) {
     if (!r || typeof r !== 'object') continue;
     if (r.op === 'zero') { if (x === 0) return r; }
@@ -56,7 +57,9 @@ export function makeDynIcon(w) {
   return {
     host,
     update() {
-      const v = state.HW ? dig(state.HW, w.metric) : null;
+      // metric 缺失/非字符串时不能丢进 dig()（path.split 会抛，而 main.js 的 render
+      // 循环没有 per-instance 兜底 —— 一个件抛错，整张叠加层停更）：按缺数据处理。
+      const v = (typeof w.metric === 'string' && w.metric && state.HW) ? dig(state.HW, w.metric) : null;
       let name, high = false, miss = false;
       if (typeof v !== 'number' || !Number.isFinite(v)) {
         miss = true;

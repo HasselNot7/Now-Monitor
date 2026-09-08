@@ -4,7 +4,7 @@
   "canvas": { "w": 1600, "h": 920, "mode": "free", "theme": "nord-console" },
   "prompt": {
     "user": "gallery",
-    "cmd": "./now-monitor --widgets=30",
+    "cmd": "./now-monitor --widgets=32",
     "cursor": true,
     "size": 19,
     "x": 24,
@@ -85,6 +85,19 @@
     { "type": "dynicon", "x": 910, "y": 760, "size": 44, "metric": "cpu.usage", "default_icon": "cpu",
       "mapping": [ { "op": ">=", "value": 5, "icon": "alert", "high": true } ] },
     { "type": "dynicon", "x": 1000, "y": 760, "size": 44, "metric": "misc.mobo_temp", "default_icon": "power",
-      "miss_icon": "wifi", "mapping": [ { "op": "nonzero", "icon": "wifi" } ] }
+      "miss_icon": "wifi", "mapping": [ { "op": "nonzero", "icon": "wifi" } ] },
+    { "type": "text", "x": 420, "y": 830, "size": 14, "text": "P2：表格 —— 五列跨行对齐 · 正常/告警/缺数据一行一个" },
+    { "type": "table", "x": 1160, "y": 700, "w": 400, "row_h": 30, "cols": ["label", "value", "bar", "light", "icon"],
+      "items": [
+        { "key": "cpu", "label": "CPU", "metric": "cpu.usage", "bar": "cpu.usage",
+          "value": { "metrics": [ { "metric": "cpu.usage" } ] },
+          "mapping": [ { "op": ">=", "value": 85, "icon": "alert", "high": true }, { "op": "nonzero", "icon": "pulse" } ] },
+        { "key": "hot", "label": "满载", "metric": "cpu.usage", "bar": "cpu.usage",
+          "value": { "metrics": [ { "metric": "cpu.usage" } ] },
+          "mapping": [ { "op": ">=", "value": 5, "icon": "alert", "high": true } ] },
+        { "key": "gone", "label": "缺数据", "metric": "misc.mobo_temp", "bar": "misc.mobo_temp",
+          "value": { "metrics": [ { "metric": "misc.mobo_temp" } ] },
+          "mapping": [ { "op": "nonzero", "icon": "wifi" } ] }
+      ] }
   ]
 }

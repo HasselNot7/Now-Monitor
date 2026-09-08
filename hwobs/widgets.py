@@ -498,36 +498,45 @@ def dynicon_height(w):
     return _int_in(w, "size", 24, 12, 200)
 
 
+def _mapping_rows(rows, errors, warnings, at=""):
+    """映射行列表的结构校验 —— P1 dynicon 首发，P2 table 的状态图标列复用（同一套
+    4 算子语义，见 MAPPING_OPS 与 dynicon.js 的 firstHit）。`at` 只是消息前缀
+    （dynicon 传空串，文案与 P1 逐字相同；table 传「第 N 行的状态列：」）。
+    渲染端对坏行自己跳过（不抛错、不白屏），这里负责把配置问题说清楚。"""
+    ops = {o["id"]: o for o in MAPPING_OPS}
+    if not isinstance(rows, list):
+        errors.append(f"{at}mapping 必须是数组（现在是 {rows!r}）")
+        return
+    for n, row in enumerate(rows, 1):
+        if not isinstance(row, dict):
+            errors.append(f"{at}第 {n} 行映射必须是对象（现在是 {row!r}）")
+            continue
+        op = row.get("op")
+        if op not in ops:
+            errors.append(f"{at}第 {n} 行映射的 op {op!r} 不认识（可选：{' / '.join(ops)}）")
+        elif ops[op]["needs_value"]:
+            v = row.get("value")
+            if not isinstance(v, (int, float)) or isinstance(v, bool):
+                errors.append(f"{at}第 {n} 行映射（{op}）需要数值阈值（现在是 {v!r}）")
+        icon = row.get("icon")
+        if not isinstance(icon, str) or not icon:
+            errors.append(f"{at}第 {n} 行映射缺 icon（命中了也没图画）")
+        elif icon not in ICON_NAMES:
+            warnings.append(f"{at}第 {n} 行映射的图标 {icon!r} 不在内置图标集，会回退 pulse")
+        hi = row.get("high")
+        if hi is not None and not isinstance(hi, bool):
+            errors.append(f"{at}第 {n} 行映射 high 需要是 true / false（现在是 {hi!r}）")
+
+
 def dynicon_validate(w, errors, warnings):
     _metric(w, errors, "dynicon")
-    ops = {o["id"]: o for o in MAPPING_OPS}
     rows = w.get("mapping")
     if rows is None:
         warnings.append("没配映射行，图标恒等于兜底（不会随数值变）")
-    elif not isinstance(rows, list):
-        errors.append(f"mapping 必须是数组（现在是 {rows!r}）")
     else:
         if not rows:
             warnings.append("没配映射行，图标恒等于兜底（不会随数值变）")
-        for n, row in enumerate(rows, 1):
-            if not isinstance(row, dict):
-                errors.append(f"第 {n} 行映射必须是对象（现在是 {row!r}）")
-                continue
-            op = row.get("op")
-            if op not in ops:
-                errors.append(f"第 {n} 行映射的 op {op!r} 不认识（可选：{' / '.join(ops)}）")
-            elif ops[op]["needs_value"]:
-                v = row.get("value")
-                if not isinstance(v, (int, float)) or isinstance(v, bool):
-                    errors.append(f"第 {n} 行映射（{op}）需要数值阈值（现在是 {v!r}）")
-            icon = row.get("icon")
-            if not isinstance(icon, str) or not icon:
-                errors.append(f"第 {n} 行映射缺 icon（命中了也没图画）")
-            elif icon not in ICON_NAMES:
-                warnings.append(f"第 {n} 行映射的图标 {icon!r} 不在内置图标集，会回退 pulse")
-            hi = row.get("high")
-            if hi is not None and not isinstance(hi, bool):
-                errors.append(f"第 {n} 行映射 high 需要是 true / false（现在是 {hi!r}）")
+        _mapping_rows(rows, errors, warnings)
     for key in ("default_icon", "miss_icon"):
         v = w.get(key)
         if v is None:
@@ -537,6 +546,121 @@ def dynicon_validate(w, errors, warnings):
         elif v not in ICON_NAMES:
             warnings.append(f"{key} {v!r} 不在内置图标集，会回退 pulse")
     _style_check(DYNICON_STYLE, w.get("style"), errors, warnings)
+
+
+# --- table：表格（P2） ---------------------------------------------------------
+# 行 = items[] 一格数据，列 = 从固定 kind 枚举里选的有序子集（cols）。数据形状刻意
+# 与 cards 同族：行数组叫 items、单元格容器用 value / bar / metric / mapping —— 这四个
+# 键名都已在 refs 的白名单里（GROUP_KEYS / REF_KEYS），所以引用遍历零改动。
+# 反过来说，把行数组改名成 rows、把单元格容器叫 cells 就会**静默丢引用**（AIDA64 裁剪
+# 清单把在用的传感器清掉，OBS 里变成 -- 且零报错，e2e567e 型事故）——见
+# docs/new-widget.md「v3 立项触发条件」。
+#
+# 列语义（五种，全部复用既有渲染件，不新造观感）：
+#   label  行名（item.label）                → .metric-label（--label-color）
+#   value  数值组（GroupDef，支持 F3 的 \n/前后空格契约）→ core.js group() + .metric-value
+#   bar    定标条（item.bar 指标，量程取注册表 range）→ .progress-track/.progress-fill，
+#          告警色走注册表 warn（与 progress 同源，契约 1）
+#   light  三态圆点（item.metric）            → .free-light/.light-dot（状态灯同一份 CSS）
+#   icon   条件图标（item.metric + item.mapping，4 算子同 dynicon）→ .free-dynicon 的
+#          类名级联；与 dynicon 不同的是「全不命中 = 该格留空」——表格里空格合法
+#          （dynicon 只有一个格子，必须有兜底图），要"总有图"就在 mapping 末尾加一条
+#          nonzero / zero 兜底行。
+#
+# 表头文案在渲染端 KIND_LABELS（装饰性文案，与这里同值；不参与校验）。
+
+TABLE_KINDS = [
+    {"id": "label", "label": "名字"},
+    {"id": "value", "label": "数值"},
+    {"id": "bar", "label": "条"},
+    {"id": "light", "label": "状态灯"},
+    {"id": "icon", "label": "状态图标"},
+]
+
+# 表头行高：与 table.js 的 HEAD_H 同值（两处各带互指注释，同 ANIM_MS 的纪律）
+TABLE_HEAD_H = 20
+
+TABLE_STYLE = COMMON_STYLE + [
+    _style_field("zebra", "斑马纹（隔行加深底）", "bool", default=False),
+]
+
+# cols 的 default 写**字面量**（不是常量名）：check-defaults 用 ast.literal_eval 读
+# props_schema 的 default 与 defaults 对账，Name 节点会让它直接抛错；两处字面量必须
+# 同值，脚本规则 2 把关。校验器不再抄第三份 —— 缺 cols 时现读 WIDGETS 的 defaults。
+TABLE_PROPS = [
+    {"key": "cols", "label": "列（点选追加到列尾 · ✕ 移除 · ↑↓ 调序）", "type": "multiselect",
+     "choices": TABLE_KINDS, "default": ["label", "value", "bar"]},
+    {"key": "head", "label": "表头行", "type": "bool", "default": True},
+    {"key": "row_h", "label": "行高 px", "type": "int", "min": 16, "max": 80, "default": 26},
+]
+
+
+def table_height(w):
+    rows = w.get("items")
+    n = len(rows) if isinstance(rows, list) else 0
+    return n * _int_in(w, "row_h", 26, 16, 80) + (TABLE_HEAD_H if w.get("head", True) else 0)
+
+
+def table_validate(w, errors, warnings):
+    items = w.get("items")
+    if items is None or not isinstance(items, list):
+        errors.append(f"table 的 items 必须是数组（行 = 一格数据，现在是 {items!r}）")
+        items = []
+    elif not items:
+        errors.append("table 至少要有一行（items 是空数组就没有可画的）")
+    keys = [r.get("key") for r in items if isinstance(r, dict)]
+    dup = sorted({k for k in keys if keys.count(k) > 1})
+    if dup:
+        errors.append(f"行 key 重复：{', '.join(map(str, dup))}（渲染按 key 索引单元格，重复会互相覆盖）")
+
+    rh = w.get("row_h", 26)
+    if not isinstance(rh, int) or isinstance(rh, bool) or not 16 <= rh <= 80:
+        errors.append(f"row_h 必须是 16~80 的整数（现在是 {rh!r}）")
+    hd = w.get("head", True)
+    if not isinstance(hd, bool):
+        errors.append(f"head 需要是 true / false（现在是 {hd!r}）")
+    kinds = [k["id"] for k in TABLE_KINDS]
+    cols = w.get("cols")
+    if cols is None:
+        # 缺省列从注册表 defaults 现读，不抄第二份字面量
+        cols = list(WIDGETS["table"]["defaults"]["cols"])
+    elif not isinstance(cols, list):
+        errors.append(f"cols 必须是数组（现在是 {cols!r}）")
+        cols = []
+    elif not cols:
+        errors.append("cols 不能是空数组：一列都没有就没有可画的")
+    else:
+        bad = [c for c in cols if c not in kinds]
+        if bad:
+            warnings.append("cols 里不认识的列会被忽略：" + ", ".join(map(str, bad))
+                            + f"（可选：{' / '.join(kinds)}）")
+        cols = [c for c in cols if c in kinds]
+
+    for n, row in enumerate(items, 1):
+        if not isinstance(row, dict):
+            errors.append(f"第 {n} 行必须是对象（现在是 {row!r}）")
+            continue
+        if not isinstance(row.get("key"), str) or not row.get("key"):
+            errors.append(f"第 {n} 行缺 key（渲染按 key 索引单元格，没有就互相覆盖）")
+        miss = []
+        if "label" in cols and not isinstance(row.get("label"), str):
+            miss.append("label（名字列）")
+        if "value" in cols and not isinstance(row.get("value"), dict):
+            miss.append("value（数值列）")
+        if "bar" in cols and not isinstance(row.get("bar"), str):
+            miss.append("bar（条列）")
+        if "light" in cols and not isinstance(row.get("metric"), str):
+            miss.append("metric（状态灯列）")
+        if "icon" in cols:
+            if not isinstance(row.get("metric"), str):
+                miss.append("metric（状态图标列）")
+            elif not row.get("mapping"):
+                miss.append("mapping（状态图标列的映射行）")
+            else:
+                _mapping_rows(row["mapping"], errors, warnings, at=f"第 {n} 行的状态列：")
+        if miss:
+            warnings.append(f"第 {n} 行缺 {', '.join(miss)}，那一格会留空")
+    _style_check(TABLE_STYLE, w.get("style"), errors, warnings)
 
 
 # --- stackbar：堆叠条（N3） ----------------------------------------------------
@@ -738,13 +862,24 @@ WIDGETS = {
         "height": dynicon_height,
         "validate": dynicon_validate,
     },
+    "table": {
+        "label": "表格", "icon": "table",
+        "summary": "表格：行=指标（名字/数值/条/状态灯/条件图标五种列任选并排序），列跨行对齐",
+        "category": "data",
+        "defaults": {"cols": ["label", "value", "bar"], "head": True, "row_h": 26},
+        "style_schema": TABLE_STYLE,
+        "props_schema": TABLE_PROPS,
+        "height": table_height,
+        "validate": table_validate,
+    },
 }
 
 
 # 「添加部件」菜单：节顺序与节名在 CATEGORIES（SSOT），归节看各登记的 category；
 # MENU_ORDER 只决定同一节内谁先谁后（组内排序），登记顺序本身不承载语义。
 MENU_ORDER = ["stat", "value", "progress", "gauge", "spark", "bars", "stackbar", "html", "icon",
-              "image", "divider", "badge", "light", "dynicon", "cards", "chips", "text", "panel"]
+              "image", "divider", "badge", "light", "dynicon", "table", "cards", "chips", "text",
+              "panel"]
 
 CATEGORIES = [
     ("data", "数据"), ("chart", "图表"), ("layout", "布局"),

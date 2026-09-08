@@ -5,15 +5,15 @@ import {
   ChevronRight, ChevronUp, CircleDashed, Code, Copy, Equal, Eye, EyeOff, Grid3x3,
   Group as GroupIcon, Hash, Image as ImageIcon, LayoutGrid, Lightbulb, Lock, LockOpen, Magnet, Minus,
   Package, Pencil, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Plus,
-  Rows3, Sigma, Square, Star, Tag, ToggleRight, Trash2, Type, Ungroup as UngroupIcon,
+  Rows3, Sigma, Square, Star, Table, Tag, ToggleRight, Trash2, Type, Ungroup as UngroupIcon,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, clone, outPaths } from "../api";
+import { api, clone, metricName, outPaths } from "../api";
 import type {
   CardsWidget, ChipsWidget, CustomComponent, DynIconWidget, FreePos, GaugeWidget, GroupedWidget,
   HtmlWidget, LayoutPreset, LightWidget, NodeBase, OverlayConfig, ProgressWidget, SparkWidget,
-  StackbarWidget, StatWidget, TextWidget, ValueWidget, Widget,
+  StackbarWidget, StatWidget, TableWidget, TextWidget, ValueWidget, Widget,
 } from "../types";
 import type { Shared } from "../shared";
 import type { WidgetsMeta } from "../types";
@@ -22,8 +22,8 @@ import { TF } from "./editors";
 import { clearDraft, loadDraft, saveDraft } from "../draftStore";
 import {
   CanvasFields, CardsEditor, ChipsEditor, GaugeEditor, HtmlEditor, LightEditor, PromptBar,
-  ProgressEditor, PropsEditor, SparkEditor, StackbarEditor, StatEditor, StyleEditor, TemplatePicker,
-  TextEditor, ValueEditor,
+  ProgressEditor, PropsEditor, SparkEditor, StackbarEditor, StatEditor, StyleEditor, TableEditor,
+  TemplatePicker, TextEditor, ValueEditor,
 } from "./editors";
 
 /** 版式编辑：Figma 式自由画布编辑器（流式排版已移除，一切版式都是自由画布）。
@@ -47,7 +47,7 @@ const FALLBACK_LABEL: Record<string, string> = {
   progress: "进度条", html: "自定义 HTML", gauge: "圆环仪表",
   spark: "迷你曲线", panel: "背景面板", value: "数值组",
   icon: "图标", image: "图片", divider: "分隔线", badge: "徽章", bars: "柱状条",
-  dynicon: "动态图标",
+  dynicon: "动态图标", table: "表格",
 };
 
 const ICON_MAP: Record<string, LucideIcon> = {
@@ -56,14 +56,14 @@ const ICON_MAP: Record<string, LucideIcon> = {
   "activity": Activity, "square": Square, "sigma": Sigma,
   "star": Star, "image": ImageIcon, "minus": Minus, "tag": Tag,
   "chart-bar": BarChart3,
-  "lightbulb": Lightbulb, "align-justify": AlignJustify, "toggle-right": ToggleRight,
+  "lightbulb": Lightbulb, "align-justify": AlignJustify, "toggle-right": ToggleRight, "table": Table,
 };
 
 const fallbackIcon = (t: string): LucideIcon =>
   ({ cards: LayoutGrid, chips: Rows3, text: Type, stat: Hash, progress: Equal,
      html: Code, gauge: CircleDashed, spark: Activity, panel: Square, value: Sigma,
      icon: Star, image: ImageIcon, divider: Minus, badge: Tag, bars: BarChart3,
-     dynicon: ToggleRight }[t] ?? LayoutGrid);
+     dynicon: ToggleRight, table: Table }[t] ?? LayoutGrid);
 
 /** 预览 iframe 入口：构建产物里留空 = 同源直连 FastAPI；dev 模式（.env.development）
  * 给 /preview —— vite 代理回后端的 /，保持同源，拖动时才能直改 iframe 里的宿主节点。 */
@@ -90,11 +90,12 @@ function estHeight(w: Widget): number {
     case "panel": return w.h ?? 100;
     case "value": return Math.round((w.size ?? 19) * 1.2);
     case "dynicon": return w.size ?? 24;   // 纯尺寸件：占高 = 图标边长（同 widgets.py dynicon_height）
+    case "table": return (w.items?.length ?? 0) * (w.row_h ?? 26) + (w.head === false ? 0 : 20);
   }
   return 40;
 }
 
-const stretchable = (t: string) => t === "cards" || t === "chips" || t === "text";
+const stretchable = (t: string) => t === "cards" || t === "chips" || t === "text" || t === "table";
 const heightEditable = (t: string) =>
   t === "html" || t === "progress" || t === "spark" || t === "panel"
   || t === "image" || t === "divider";
@@ -977,6 +978,14 @@ export default function EditorPage({ shared }: { shared: Shared }) {
     if (type === "chips") Object.assign(base, { type, items: [] });
     if (type === "text") Object.assign(base, { type, text: "{cpu.usage}%" });
     if (type === "panel") Object.assign(base, { type });
+    // 表格落地就给三行示例（CPU/GPU/内存），否则新件是一张空表，看不出自己长什么样
+    if (type === "table") Object.assign(base, {
+      type, w: 520,
+      items: ["cpu.usage", "gpu.usage", "ram.pct"].map(m => ({
+        key: m.split(".")[0], label: metricName(metrics, m),
+        metric: m, bar: m, value: { metrics: [m] },
+      })),
+    });
     d.widgets.push(base as unknown as Widget);
     pushHistory();   // B2 穷尽表产出：添加件此前不入栈，验收②"添加件那步还在栈里"的前提
     setDraft({ ...d });
@@ -3185,6 +3194,7 @@ export default function EditorPage({ shared }: { shared: Shared }) {
                   {w.type === "value" && <ValueEditor w={w as ValueWidget} metrics={metrics} onChange={onChange} compact />}
                   {w.type === "light" && <LightEditor w={w as LightWidget} metrics={metrics} onChange={onChange} compact />}
                   {w.type === "stackbar" && <StackbarEditor w={w as StackbarWidget} metrics={metrics} onChange={onChange} />}
+                  {w.type === "table" && <TableEditor w={w as TableWidget} metrics={metrics} meta={meta} onChange={onChange} />}
                 </div>
                 {/* 属性：按后端 props_schema 自动生成（icon/image/divider/badge 这类
                     简单件的内容字段）；复杂件继续走上面的手写编辑器 */}

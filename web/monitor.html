@@ -224,6 +224,18 @@
     .free-dynicon.fade svg { animation: dynicon-in var(--anim-ms) ease; }
     @keyframes dynicon-in { from { opacity: 0; } to { opacity: 1; } }
 
+    /* P2：表格 —— 列宽由同一份 grid-template-columns 决定（跨行对齐是它存在的理由，
+       多个原子件拼不出）。条/灯/状态图标三列直接复用 .progress-track / .free-light /
+       .free-dynicon 的类与色键，这里只写骨架、字号与斑马纹，不新增任何颜色字面量。 */
+    .free-table { display: flex; flex-direction: column; }
+    .free-table .table-row { display: grid; align-items: center; gap: 10px; }
+    .free-table .table-cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+    .free-table .tc-value { white-space: pre-wrap; }        /* F3 的 \n 换行在格子里也成立 */
+    .free-table .tc-light, .free-table .tc-icon { justify-self: center; }
+    .free-table .tc-bar .progress-track { height: var(--bar-h, 8px); }   /* 表里的条比卡片细一档，style.bar_h 照样能覆盖 */
+    .free-table .table-head .table-cell { font-size: 14px; color: var(--label-color); opacity: .7; }
+    .free-table.zebra .table-row.odd { background: var(--bar-bg); }
+
     /* N3：堆叠条 —— 分段宽度过渡走 --anim-ms；轨道色 = --bar-bg（外观 track 覆盖）；
        全缺/全零整条 .tmiss 压暗 */
     .free-stackbar { display: flex; overflow: hidden; background: var(--bar-bg); }

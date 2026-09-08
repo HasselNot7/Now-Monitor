@@ -20,6 +20,7 @@ import { makeBadge } from './widgets/badge.js';
 import { makeLight } from './widgets/light.js';
 import { makeStackbar } from './widgets/stackbar.js';
 import { makeDynIcon } from './widgets/dynicon.js';
+import { makeTable } from './widgets/table.js';
 
 export const WIDGET_TYPES = {
   cards: makeCards, chips: makeChips, text: makeText,
@@ -27,4 +28,5 @@ export const WIDGET_TYPES = {
   gauge: makeGauge, spark: makeSpark, panel: makePanel, value: makeValue,
   icon: makeIcon, image: makeImage, divider: makeDivider, badge: makeBadge,
   bars: makeBars, light: makeLight, stackbar: makeStackbar, dynicon: makeDynIcon,
+  table: makeTable,
 };

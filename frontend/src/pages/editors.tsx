@@ -12,8 +12,9 @@ import { ChevronDown, ChevronUp, Plus, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type {
   CardItem, CardsWidget, ChipsWidget, DynIconRule, GaugeWidget, GroupDef, HtmlWidget, LayoutPreset,
-  LightWidget, Metric, MetricRef, OverlayConfig, ProgressWidget, PropField, SparkWidget,
-  StackbarWidget, StatWidget, StyleField, TextWidget, ValueWidget, Widget, WidgetsMeta,
+  LightWidget, MappingOp, Metric, MetricRef, OverlayConfig, ProgressWidget, PropField, SparkWidget,
+  StackbarWidget, StatWidget, StyleField, TableRow, TableWidget, TextWidget, ValueWidget, Widget,
+  WidgetsMeta,
 } from "../types";
 import { AnimatedRow } from "../motion";
 import { api } from "../api";
@@ -887,25 +888,16 @@ function ThresholdField({ v, scale, onSet }: {
   );
 }
 
-/** type="mapping"：映射行列表编辑器（P1 dynicon 首发，P2 表格部件复用）。
- * 行 = {op, value?, icon, high?}，自上而下首个命中生效；算子清单与图标清单都来自
- * 后端 props_schema（ops / icons），这里不写死任何一份。
+/** 映射行列表的**公共编辑体**（P1 dynicon 的属性面板与 P2 表格的状态图标列共用这一份）。
+ * 它只管「怎么编辑一组行」，不管这组行存在哪个字段上 —— 存哪、怎么提交由调用方决定。
+ * 行 = {op, value?, icon, high?}，自上而下首个命中生效；算子清单与图标清单都由调用方
+ * 从后端 schema 传进来（ops / icons），这里不写死任何一份。
  * 编辑一律「原地改 + onChange()」：撤销交给 EditorPage 的 B2 影子合并（面板编辑
  * 500ms 内并成一步），本组件绝不自己 pushHistory。 */
-function MappingEditor({ f, w, metrics, onChange }: {
-  f: PropField; w: Widget; metrics: Metric[]; onChange: () => void;
+function MappingList({ label, rows, ops, icons, metric, commit, emptyHint }: {
+  label: string; rows: DynIconRule[]; ops: MappingOp[]; icons: string[];
+  metric?: Metric; commit: (next: DynIconRule[]) => void; emptyHint?: string;
 }) {
-  const node = w as unknown as Record<string, unknown>;
-  const rows = (Array.isArray(node[f.key]) ? node[f.key] : []) as DynIconRule[];
-  const ops = f.ops ?? [];
-  const icons = f.icons ?? [];
-  const metric = typeof node.metric === "string" ? node.metric : "";
-  const m = metrics.find(x => x.out === metric);
-  const commit = (next: DynIconRule[]) => {
-    if (next.length) node[f.key] = next;
-    else delete node[f.key];        // 清空 = 删键（与 PropsEditor.set 同口径）
-    onChange();
-  };
   const patch = (i: number, p: Partial<DynIconRule>) =>
     commit(rows.map((r, j) => (j === i ? { ...r, ...p } : r)));
   const move = (i: number, d: number) => {
@@ -920,7 +912,7 @@ function MappingEditor({ f, w, metrics, onChange }: {
   return (
     <div className="flex min-w-0 flex-col gap-2">
       <div className="flex items-center justify-between gap-2">
-        <FieldLabel>{f.label}</FieldLabel>
+        <FieldLabel>{label}</FieldLabel>
         <Btn size="sm" variant="ghost" className="h-7 shrink-0 rounded-lg px-2 text-xs"
           title="在末尾加一行映射"
           onPress={() => commit([...rows, {
@@ -930,7 +922,7 @@ function MappingEditor({ f, w, metrics, onChange }: {
         </Btn>
       </div>
       {!rows.length && (
-        <Hint className="text-sm">还没有映射行 —— 图标恒等于兜底，不会随数值变。</Hint>
+        <Hint className="text-sm">{emptyHint || "还没有映射行 —— 图标恒等于兜底，不会随数值变。"}</Hint>
       )}
       {rows.map((r, i) => (
         <div key={i} className="rounded-xl border border-white/[0.07] bg-black/25 p-2">
@@ -946,7 +938,7 @@ function MappingEditor({ f, w, metrics, onChange }: {
                 <option key={o.id} value={o.id}>{o.label}</option>)}
             </select>
             {needsValue(r.op) && (
-              <ThresholdField v={r.value} scale={m?.divide ?? 1}
+              <ThresholdField v={r.value} scale={metric?.divide ?? 1}
                 onSet={n => patch(i, { value: n })} />
             )}
             <Btn isIconOnly size="sm" variant="ghost" className={tiny} title="上移"
@@ -968,12 +960,89 @@ function MappingEditor({ f, w, metrics, onChange }: {
                 onChange={b => patch(i, { high: b || undefined })} />
             </span>
           </div>
-          {m?.na_zero && (r.op === "zero" || r.op === "nonzero") && (
+          {metric?.na_zero && (r.op === "zero" || r.op === "nonzero") && (
             <Hint className="text-xs">该指标把 0 当缺数据（注册表 na_zero），
               这行等值判断不会命中 —— 要「开/关」语义请换 cpu.usage / net.* 这类指标。</Hint>
           )}
         </div>
       ))}
+    </div>
+  );
+}
+
+/** type="mapping"：把 MappingList 接到部件的某个字段上（P1 dynicon 首发）。
+ * 清空 = 删键（与 PropsEditor.set 同口径）。 */
+function MappingEditor({ f, w, metrics, onChange }: {
+  f: PropField; w: Widget; metrics: Metric[]; onChange: () => void;
+}) {
+  const node = w as unknown as Record<string, unknown>;
+  const rows = (Array.isArray(node[f.key]) ? node[f.key] : []) as DynIconRule[];
+  const commit = (next: DynIconRule[]) => {
+    if (next.length) node[f.key] = next;
+    else delete node[f.key];
+    onChange();
+  };
+  const metric = metrics.find(x => x.out === (typeof node.metric === "string" ? node.metric : ""));
+  return (
+    <MappingList label={f.label} rows={rows} ops={f.ops ?? []} icons={f.icons ?? []}
+      metric={metric} commit={commit} />
+  );
+}
+
+/** type="multiselect"：可选项药丸组（P2 表格的列选择首发）。
+ * 定稿语义：点未选中的项 = **追加到列尾**；已选中的药丸带 ✕ 移除 + ↑↓ 调序；
+ * **不引入拖拽**（与 mapping 行同族交互，300px 窄面板里也不与框选/拖动打架）。
+ * 值 = 选中项 id 的有序数组；清空 = 删键回默认（与标量控件同口径）。 */
+function MultiselectField({ f, w, onChange }: {
+  f: PropField; w: Widget; onChange: () => void;
+}) {
+  const node = w as unknown as Record<string, unknown>;
+  const choices = f.choices ?? [];
+  const cur = (Array.isArray(node[f.key]) ? node[f.key] : (f.default ?? [])) as string[];
+  const commit = (next: string[]) => {
+    if (next.length) node[f.key] = next;
+    else delete node[f.key];
+    onChange();
+  };
+  const move = (i: number, d: number) => {
+    const j = i + d;
+    if (j < 0 || j >= cur.length) return;
+    const next = cur.slice();
+    [next[i], next[j]] = [next[j], next[i]];
+    commit(next);
+  };
+  const labelOf = (id: string) => choices.find(c => c.id === id)?.label ?? id;
+  const tiny = "h-6 min-w-0 w-6 px-0";
+  const rest = choices.filter(c => !cur.includes(c.id));
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5">
+      <FieldLabel>{f.label}</FieldLabel>
+      <div className="flex flex-wrap gap-1.5">
+        {cur.map((id, i) => (
+          <span key={id}
+            className="flex items-center gap-0.5 rounded-lg border border-primary/40 bg-primary/15 py-0.5 pr-0.5 pl-2 text-xs text-foreground">
+            {i + 1}. {labelOf(id)}
+            <Btn isIconOnly size="sm" variant="ghost" className={tiny} title="前移"
+              onPress={() => move(i, -1)}><ChevronUp size={12} /></Btn>
+            <Btn isIconOnly size="sm" variant="ghost" className={tiny} title="后移"
+              onPress={() => move(i, 1)}><ChevronDown size={12} /></Btn>
+            <Btn isIconOnly size="sm" variant="ghost" className={tiny} title="移除这一列"
+              onPress={() => commit(cur.filter((_, j) => j !== i))}><X size={12} /></Btn>
+          </span>
+        ))}
+        {!cur.length && <Hint className="text-xs">一列都没选 —— 表格没有可画的列。</Hint>}
+      </div>
+      {!!rest.length && (
+        <div className="flex flex-wrap gap-1.5">
+          {rest.map(c => (
+            <Btn key={c.id} size="sm" variant="ghost"
+              className="h-6 rounded-lg border border-white/10 bg-[#1a1a1d] px-2 text-xs"
+              title={`加到列尾：${c.label}`} onPress={() => commit([...cur, c.id])}>
+              <Plus size={11} className="mr-1" />{c.label}
+            </Btn>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1000,6 +1069,9 @@ export function PropsEditor({ w, schema, onChange, metrics }: {
         // P1 的两种整块控件不进标量行（那条行布局塞不下指标下拉与映射列表）
         if (f.type === "mapping") {
           return <MappingEditor key={f.key} f={f} w={w} metrics={metrics ?? []} onChange={onChange} />;
+        }
+        if (f.type === "multiselect") {
+          return <MultiselectField key={f.key} f={f} w={w} onChange={onChange} />;
         }
         if (f.type === "metric") {
           return <MetricField key={f.key} f={f} w={w} metrics={metrics ?? []} onChange={onChange} />;
@@ -1186,6 +1258,89 @@ export function StackbarEditor({ w, metrics, onChange }: {
         <TF type="number" className="w-full" defaultValue={String(w.height ?? 12)}
           onChange={v => { w.height = +v || 12; onChange(); }} />
       </div>
+    </div>
+  );
+}
+
+/** 表格编辑器（P2）：只管**行**（items）—— 列选择 / 表头 / 行高走 props_schema 自动面板。
+ * 数值列直接复用 SlotEditor（影子卡把 row.value 挂进 value 槽，与 StackbarEditor 同法），
+ * 状态图标列复用 MappingList（P1 的 4 算子契约第二次复用，算子与图标清单从 dynicon 的
+ * props_schema 现读，不抄第二份）。行编辑一律「原地改 + onChange()」，撤销交给 B2。 */
+export function TableEditor({ w, metrics, meta, onChange }: {
+  w: TableWidget; metrics: Metric[]; meta: WidgetsMeta | null; onChange: () => void;
+}) {
+  if (!Array.isArray(w.items)) w.items = [];
+  const rows = w.items;
+  const commit = (next: TableRow[]) => { w.items = next; onChange(); };
+  const patch = (i: number, p: Partial<TableRow>) =>
+    commit(rows.map((r, j) => (j === i ? { ...r, ...p } : r)));
+  const move = (i: number, d: number) => {
+    const j = i + d;
+    if (j < 0 || j >= rows.length) return;
+    const next = rows.slice();
+    [next[i], next[j]] = [next[j], next[i]];
+    commit(next);
+  };
+  const addRow = () => {
+    const first = outPaths(metrics)[0];
+    commit([...rows, {
+      key: `r${Date.now() % 100000}`, label: "新行", metric: first,
+      value: { metrics: [first] }, bar: first,
+    }]);
+  };
+  // 状态图标列的算子/图标清单：从 dynicon 的 props_schema 现读（同一份契约，不抄第二份）
+  const mapField = meta?.widgets["dynicon"]?.props_schema?.find(p => p.type === "mapping");
+  const cols = w.cols ?? ["label", "value", "bar"];
+  const tiny = "h-7 min-w-0 w-7 px-0";
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center justify-between gap-2">
+        <SubTitle>行（{rows.length}）</SubTitle>
+        <Btn size="sm" variant="ghost" className="h-7 shrink-0 rounded-lg px-2 text-xs"
+          title="在末尾加一行" onPress={addRow}><Plus size={13} className="mr-1" />加一行</Btn>
+      </div>
+      {!rows.length && <Hint className="text-sm">还没有行 —— 表格至少要一行才有东西画。</Hint>}
+      {rows.map((row, i) => (
+        <div key={i} className="flex flex-col gap-2 rounded-xl border border-white/[0.07] bg-black/25 p-2">
+          <div className="flex items-center gap-1.5">
+            <TF className="min-w-0 flex-1 font-poppins" title={`行 key：${row.key}（渲染按它索引单元格）`}
+              placeholder="行名" defaultValue={row.label ?? ""}
+              onChange={v => patch(i, { label: v || undefined })} />
+            <Btn isIconOnly size="sm" variant="ghost" className={tiny} title="上移"
+              onPress={() => move(i, -1)}><ChevronUp size={14} /></Btn>
+            <Btn isIconOnly size="sm" variant="ghost" className={tiny} title="下移"
+              onPress={() => move(i, 1)}><ChevronDown size={14} /></Btn>
+            <Btn isIconOnly size="sm" variant="danger" className={tiny} title="删除这行"
+              onPress={() => commit(rows.filter((_, j) => j !== i))}><X size={14} /></Btn>
+          </div>
+          {cols.includes("value") && (
+            <SlotEditor card={row as unknown as CardItem} defKey="value" title="数值列"
+              allowLabel metrics={metrics} onChange={onChange} compact />
+          )}
+          {cols.includes("bar") && (
+            <div className="flex min-w-0 flex-col gap-1.5">
+              <FieldLabel>条列指标（量程与告警色取注册表）</FieldLabel>
+              <MetricSelect metrics={metrics} value={row.bar} compact
+                onChange={v => patch(i, { bar: v || undefined })} />
+            </div>
+          )}
+          {(cols.includes("light") || cols.includes("icon")) && (
+            <div className="flex min-w-0 flex-col gap-1.5">
+              <FieldLabel>{cols.includes("icon") ? "状态指标（灯 / 图标列共用）" : "状态灯指标"}</FieldLabel>
+              <MetricSelect metrics={metrics} value={row.metric} compact
+                onChange={v => patch(i, { metric: v || undefined })} />
+            </div>
+          )}
+          {cols.includes("icon") && (
+            <MappingList label="状态图标映射（自上而下首个命中；全不命中 = 该格留空）"
+              rows={Array.isArray(row.mapping) ? row.mapping : []}
+              ops={mapField?.ops ?? []} icons={mapField?.icons ?? []}
+              metric={metrics.find(x => x.out === row.metric)}
+              commit={next => patch(i, { mapping: next.length ? next : undefined })}
+              emptyHint="还没有映射行 —— 这一格的图标列会是空的。" />
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -1395,6 +1550,11 @@ function PresetThumb({ cfg }: { cfg: OverlayConfig }) {
       case "light": return Math.max(w.size ?? 12, w.label ? line(15) : 0);
       case "stackbar": return w.height ?? 12;
       case "dynicon": return w.size ?? 24;   // 纯尺寸件：占高 = 图标边长（同 widgets.py dynicon_height）
+      case "table": {
+        // 与 widgets.py table_height 同口径：行数 × 行高 +（表头 20）
+        const n = w.items?.length ?? 0;
+        return n * (w.row_h ?? 26) + (w.head === false ? 0 : 20);
+      }
       default: return 40;
     }
   };
